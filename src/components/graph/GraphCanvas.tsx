@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import cytoscape, { Core, Stylesheet } from 'cytoscape';
+import cytoscape, { Core } from 'cytoscape';
 
 // Intelligence Color Scheme mapping
 const nodeColors: Record<string, string> = {
@@ -31,20 +31,21 @@ export const GraphCanvas: React.FC = () => {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Cytoscape Stylesheet matching the dark aesthetic
-    const style: Stylesheet[] = [
+    // Use any[] to bypass strict TS definitions for the stylesheet
+    const style: any[] = [
       {
         selector: 'node',
         style: {
           'label': 'data(label)',
-          'background-color': (ele) => nodeColors[ele.data('type')] || '#7880a0',
+          // Explicitly type 'ele' as any to satisfy TS7006 (noImplicitAny)
+          'background-color': (ele: any) => nodeColors[ele.data('type')] || '#7880a0',
           'color': '#dde1ec',
           'text-valign': 'bottom',
           'text-halign': 'center',
           'text-margin-y': 6,
           'font-family': 'Space Mono, monospace',
           'font-size': '10px',
-          'width': 48, // Minimum 44px touch target per Apple HIG
+          'width': 48,
           'height': 48,
           'border-width': 2,
           'border-color': '#252a3a'
@@ -84,14 +85,13 @@ export const GraphCanvas: React.FC = () => {
       elements: mockElements,
       style: style,
       layout: {
-        name: 'cose', // Force-directed layout
+        name: 'cose',
         padding: 50,
         animate: true
       },
-      // Touch and Mobile Optimizations
       userZoomingEnabled: true,
       userPanningEnabled: true,
-      boxSelectionEnabled: false, // Prevents accidental boxes while swiping
+      boxSelectionEnabled: false,
       minZoom: 0.1,
       maxZoom: 4,
       touchTapThreshold: 8,

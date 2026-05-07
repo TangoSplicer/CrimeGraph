@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
-import { PrivacyScreen } from '@capacitor-community/privacy-screen';
 import { useAuthStore } from './stores/authStore';
 import { initDatabase } from './capacitor/db';
+
+// 🚀 ELITE FIX: Dynamically register the native plugin to bypass Vite's static web bundler
+const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
 const App: React.FC = () => {
   const { isLocked, recordActivity, lock, lockTimeoutMs, lastActivityAt } = useAuthStore();
@@ -12,7 +14,9 @@ const App: React.FC = () => {
     initDatabase().catch(console.error);
 
     if (Capacitor.isNativePlatform()) {
+      // This will now execute natively on Android/iOS without crashing Vite
       PrivacyScreen.enable().catch(console.error);
+      
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (!isActive) lock();
       });

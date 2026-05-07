@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/authStore';
 import { initDatabase } from './capacitor/db';
 import { LoginScreen } from './screens/LoginScreen';
+import { DashboardScreen } from './screens/DashboardScreen';
 
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
@@ -36,16 +38,13 @@ const App: React.FC = () => {
       {isLocked ? (
         <LoginScreen />
       ) : (
-        <div className="text-center">
-          <h1 className="text-2xl font-mono text-[#1d9a6c] mb-4">Workspace Active</h1>
-          <p className="text-[#7880a0]">Database connected successfully.</p>
-          <button 
-            onClick={lock}
-            className="mt-4 px-4 py-2 border border-[#252a3a] text-[#7880a0] hover:text-white rounded"
-          >
-            Lock Session
-          </button>
-        </div>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<DashboardScreen />} />
+            {/* Fallback routing */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
       )}
     </div>
   );

@@ -15,7 +15,7 @@ export async function initDatabase() {
     
     await db.open();
 
-    const createUsersTable = `
+    const createTables = `
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         username TEXT UNIQUE NOT NULL,
@@ -28,8 +28,23 @@ export async function initDatabase() {
         last_login TEXT,
         is_active INTEGER DEFAULT 1
       );
+
+      CREATE TABLE IF NOT EXISTS cases (
+        id TEXT PRIMARY KEY,
+        reference_number TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        case_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        lead_officer_id TEXT REFERENCES users(id),
+        classification TEXT NOT NULL DEFAULT 'OFFICIAL',
+        description TEXT,
+        date_opened TEXT NOT NULL,
+        date_closed TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `;
-    await db.execute(createUsersTable);
+    await db.execute(createTables);
     
     return db;
   } catch (error) {

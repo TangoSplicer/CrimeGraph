@@ -3,8 +3,8 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useAuthStore } from './stores/authStore';
 import { initDatabase } from './capacitor/db';
+import { LoginScreen } from './screens/LoginScreen';
 
-// 🚀 ELITE FIX: Dynamically register the native plugin to bypass Vite's static web bundler
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
 const App: React.FC = () => {
@@ -14,9 +14,7 @@ const App: React.FC = () => {
     initDatabase().catch(console.error);
 
     if (Capacitor.isNativePlatform()) {
-      // This will now execute natively on Android/iOS without crashing Vite
       PrivacyScreen.enable().catch(console.error);
-      
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (!isActive) lock();
       });
@@ -36,14 +34,17 @@ const App: React.FC = () => {
       onTouchStart={recordActivity}
     >
       {isLocked ? (
-        <div className="text-center">
-          <h1 className="text-2xl font-mono text-[#3a7bd5] mb-4">CrimeGraph Locked</h1>
-          <p className="text-[#7880a0]">Authentication module pending...</p>
-        </div>
+        <LoginScreen />
       ) : (
         <div className="text-center">
           <h1 className="text-2xl font-mono text-[#1d9a6c] mb-4">Workspace Active</h1>
           <p className="text-[#7880a0]">Database connected successfully.</p>
+          <button 
+            onClick={lock}
+            className="mt-4 px-4 py-2 border border-[#252a3a] text-[#7880a0] hover:text-white rounded"
+          >
+            Lock Session
+          </button>
         </div>
       )}
     </div>

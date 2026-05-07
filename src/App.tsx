@@ -6,6 +6,7 @@ import { useAuthStore } from './stores/authStore';
 import { initDatabase } from './capacitor/db';
 import { LoginScreen } from './screens/LoginScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
+import { GraphWorkspaceScreen } from './screens/GraphWorkspaceScreen';
 
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
@@ -41,7 +42,7 @@ const App: React.FC = () => {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<DashboardScreen />} />
-            {/* Fallback routing */}
+            <Route path="/graph" element={<GraphWorkspaceScreen />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

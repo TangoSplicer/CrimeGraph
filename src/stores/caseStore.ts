@@ -8,21 +8,43 @@ export interface Case {
   status: 'active' | 'pending_review' | 'closed' | 'archived';
   classification: 'OFFICIAL' | 'OFFICIAL-SENSITIVE' | 'SECRET';
   date_opened: string;
-  node_count?: number; // Virtual field for UI
+  node_count?: number;
+}
+
+export interface GraphElement {
+  data: {
+    id: string;
+    label: string;
+    type?: string;
+    source?: string;
+    target?: string;
+  };
 }
 
 interface CaseState {
   cases: Case[];
   activeCaseId: string | null;
+  graphElements: GraphElement[];
   loadCases: () => Promise<void>;
   setActiveCase: (id: string) => void;
+  addNode: (nodeType: string, label: string) => void;
 }
+
+const initialMockElements: GraphElement[] = [
+  { data: { id: 'n1', label: 'John DOE', type: 'person' } },
+  { data: { id: 'n2', label: '07700 900123', type: 'phone' } },
+  { data: { id: 'n3', label: 'Ford Transit (Blue)', type: 'vehicle' } },
+  { data: { id: 'n4', label: 'Safehouse A', type: 'location' } },
+  { data: { id: 'e1', source: 'n1', target: 'n2', label: 'OWNS' } },
+  { data: { id: 'e2', source: 'n1', target: 'n3', label: 'DRIVES' } },
+  { data: { id: 'e3', source: 'n3', target: 'n4', label: 'SEEN AT' } }
+];
 
 export const useCaseStore = create<CaseState>((set) => ({
   cases: [],
   activeCaseId: null,
+  graphElements: initialMockElements,
   
-  // In a real app, this queries SQLite. For now, we mock it to build the UI.
   loadCases: async () => {
     const mockCases: Case[] = [
       {
@@ -34,20 +56,21 @@ export const useCaseStore = create<CaseState>((set) => ({
         classification: 'SECRET',
         date_opened: new Date().toISOString(),
         node_count: 142
-      },
-      {
-        id: '2',
-        reference_number: 'MP-882-BR',
-        title: 'Misper: John DOE (High Risk)',
-        case_type: 'missing_person',
-        status: 'pending_review',
-        classification: 'OFFICIAL-SENSITIVE',
-        date_opened: new Date(Date.now() - 86400000 * 3).toISOString(),
-        node_count: 28
       }
     ];
     set({ cases: mockCases });
   },
   
   setActiveCase: (id) => set({ activeCaseId: id }),
+
+  addNode: (nodeType, label) => set((state) => {
+    const newNode: GraphElement = {
+      data: {
+        id: `node_${Date.now()}`, // Temporary ID generation
+        label,
+        type: nodeType
+      }
+    };
+    return { graphElements: [...state.graphElements, newNode] };
+  })
 }));

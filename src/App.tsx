@@ -7,6 +7,7 @@ import { initDatabase } from './capacitor/db';
 import { LoginScreen } from './screens/LoginScreen';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { GraphWorkspaceScreen } from './screens/GraphWorkspaceScreen';
+import { AddEntityScreen } from './screens/AddEntityScreen';
 
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
@@ -43,6 +44,7 @@ const App: React.FC = () => {
           <Routes>
             <Route path="/" element={<DashboardScreen />} />
             <Route path="/graph" element={<GraphWorkspaceScreen />} />
+            <Route path="/add" element={<AddEntityScreen />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

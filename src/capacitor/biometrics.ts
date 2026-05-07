@@ -12,9 +12,11 @@ export async function isBiometricAvailable(): Promise<boolean> {
 
 export async function authenticateWithBiometrics(reason: string): Promise<boolean> {
   try {
-    const result = await BiometricAuth.authenticate({ reason });
-    return result.hasVerified;
+    // The plugin resolves with void on success, and throws on failure/cancel
+    await BiometricAuth.authenticate({ reason });
+    return true;
   } catch (e) {
+    console.error('Biometric auth failed or canceled', e);
     return false;
   }
 }

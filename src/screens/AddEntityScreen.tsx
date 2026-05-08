@@ -8,8 +8,8 @@ export const AddEntityScreen: React.FC = () => {
   const { addNode } = useCaseStore();
   const [nodeType, setNodeType] = useState('person');
   const [label, setLabel] = useState('');
+  const [confidence, setConfidence] = useState(3); // Default to 3 stars
 
-  // Added POLE aligned missing entities: event & organisation
   const nodeTypes = [
     { id: 'person', label: 'Person' },
     { id: 'vehicle', label: 'Vehicle' },
@@ -24,7 +24,7 @@ export const AddEntityScreen: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!label.trim()) return;
-    addNode(nodeType, label.trim());
+    addNode(nodeType, label.trim(), confidence);
     navigate('/graph');
   };
 
@@ -56,6 +56,7 @@ export const AddEntityScreen: React.FC = () => {
               ))}
             </div>
           </div>
+          
           <div>
             <label className="block text-xs font-bold text-[#7880a0] mb-2 uppercase">Label / Identifier</label>
             <input 
@@ -67,7 +68,28 @@ export const AddEntityScreen: React.FC = () => {
               required
             />
           </div>
-          <button type="submit" className="w-full py-3 bg-[#1d9a6c] hover:bg-[#157a55] text-white font-bold rounded shadow-lg transition-colors mt-8">
+
+          {/* 🚀 NEW: Confidence Rating UI */}
+          <div>
+            <label className="block text-xs font-bold text-[#7880a0] mb-2 uppercase">Intelligence Confidence</label>
+            <div className="flex justify-between items-center bg-[#0f1219] border border-[#252a3a] rounded p-3">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setConfidence(star)}
+                  className={`text-2xl ${star <= confidence ? 'text-[#1d9a6c]' : 'text-[#454d66]'}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+            <p className="text-right text-[10px] text-[#7880a0] mt-1 font-mono">
+              Level {confidence} of 5
+            </p>
+          </div>
+
+          <button type="submit" className="w-full py-3 bg-[#1d9a6c] hover:bg-[#157a55] text-white font-bold rounded shadow-lg transition-colors mt-4">
             Create Node
           </button>
         </form>

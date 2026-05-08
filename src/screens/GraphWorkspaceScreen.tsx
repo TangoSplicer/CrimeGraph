@@ -18,12 +18,17 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const handleStartConnection = () => {
     if (selectedNodeId) {
       setConnectingFromId(selectedNodeId);
-      setSelectedNodeId(null); // Close the sheet to let them tap the target
+      setSelectedNodeId(null);
     }
   };
 
   const handleCancelConnection = () => {
     setConnectingFromId(null);
+  };
+
+  // 🚀 NEW: Helper to generate the star string dynamically
+  const renderStars = (rating: number = 3) => {
+    return '★'.repeat(rating) + '☆'.repeat(5 - rating);
   };
 
   return (
@@ -38,7 +43,6 @@ export const GraphWorkspaceScreen: React.FC = () => {
         </span>
       </div>
 
-      {/* Target Mode Banner */}
       {connectingFromId && (
         <div className="absolute top-[70px] left-4 right-4 z-20 bg-[#3a7bd5] text-white p-3 rounded shadow-lg flex justify-between items-center">
           <span className="text-xs font-bold uppercase tracking-wide animate-pulse">
@@ -57,7 +61,6 @@ export const GraphWorkspaceScreen: React.FC = () => {
         <GraphCanvas />
       </div>
 
-      {/* The Slide-Up Detail Sheet */}
       <BottomSheet 
         isOpen={!!selectedNodeId && !connectingFromId} 
         onClose={() => setSelectedNodeId(null)}
@@ -70,9 +73,12 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#dde1ec] capitalize">{selectedNode.data.type?.replace('_', ' ')}</span>
             </div>
             
+            {/* 🚀 NEW: Render the dynamic confidence rating here */}
             <div className="flex justify-between items-center border-b border-[#252a3a] pb-4">
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
-              <span className="text-[#1d9a6c] font-mono">★★★☆☆</span>
+              <span className="text-[#1d9a6c] font-mono text-lg">
+                {renderStars(selectedNode.data.confidence)}
+              </span>
             </div>
 
             <div className="grid grid-cols-2 gap-4 pt-4">

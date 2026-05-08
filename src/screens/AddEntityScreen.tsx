@@ -5,17 +5,18 @@ import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const AddEntityScreen: React.FC = () => {
   const navigate = useNavigate();
-  // FIXED: Removed the unused activeCaseId extraction
   const { addNode } = useCaseStore();
-  
   const [nodeType, setNodeType] = useState('person');
   const [label, setLabel] = useState('');
 
+  // Added POLE aligned missing entities: event & organisation
   const nodeTypes = [
     { id: 'person', label: 'Person' },
     { id: 'vehicle', label: 'Vehicle' },
     { id: 'phone', label: 'Phone Number' },
     { id: 'location', label: 'Location' },
+    { id: 'event', label: 'Event' },
+    { id: 'organisation', label: 'Organisation' },
     { id: 'digital_account', label: 'Digital Account' },
     { id: 'evidence', label: 'Evidence Item' }
   ];
@@ -23,7 +24,6 @@ export const AddEntityScreen: React.FC = () => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!label.trim()) return;
-    
     addNode(nodeType, label.trim());
     navigate('/graph');
   };
@@ -45,7 +45,7 @@ export const AddEntityScreen: React.FC = () => {
                   key={t.id}
                   type="button"
                   onClick={() => setNodeType(t.id)}
-                  className={`py-2 px-2 rounded text-xs font-bold border transition-colors ${
+                  className={`py-2 px-2 rounded text-[11px] font-bold border transition-colors ${
                     nodeType === t.id 
                       ? 'bg-[#3a7bd5] text-white border-[#3a7bd5]' 
                       : 'bg-[#0f1219] text-[#7880a0] border-[#252a3a] hover:border-[#454d66]'
@@ -56,7 +56,6 @@ export const AddEntityScreen: React.FC = () => {
               ))}
             </div>
           </div>
-
           <div>
             <label className="block text-xs font-bold text-[#7880a0] mb-2 uppercase">Label / Identifier</label>
             <input 
@@ -68,16 +67,11 @@ export const AddEntityScreen: React.FC = () => {
               required
             />
           </div>
-
-          <button 
-            type="submit" 
-            className="w-full py-3 bg-[#1d9a6c] hover:bg-[#157a55] text-white font-bold rounded shadow-lg transition-colors mt-8"
-          >
+          <button type="submit" className="w-full py-3 bg-[#1d9a6c] hover:bg-[#157a55] text-white font-bold rounded shadow-lg transition-colors mt-8">
             Create Node
           </button>
         </form>
       </div>
-
       <BottomTabBar />
     </div>
   );

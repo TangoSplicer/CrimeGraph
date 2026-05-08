@@ -18,7 +18,6 @@ export const GraphCanvas: React.FC = () => {
   const cyRef = useRef<Core | null>(null);
   const { graphElements } = useCaseStore();
 
-  // Initialization Effect
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -74,29 +73,28 @@ export const GraphCanvas: React.FC = () => {
       if (cyRef.current) cyRef.current.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Only run once on mount
+  }, []);
 
-  // Reactivity Effect: Diff new elements and inject them smoothly
   useEffect(() => {
     if (!cyRef.current) return;
     const cy = cyRef.current;
 
-    // Get current IDs in the cytoscape instance
     const currentIds = new Set();
-    cy.elements().forEach((ele: any) => currentIds.add(ele.id()));
+    // FIXED: Added {} to prevent implicit return of the Set, satisfying TS void requirement
+    cy.elements().forEach((ele: any) => {
+      currentIds.add(ele.id());
+    });
 
-    // Find elements in our global store that aren't on the canvas yet
     const newElements = graphElements.filter(e => !currentIds.has(e.data.id));
 
     if (newElements.length > 0) {
       cy.add(newElements);
-      // Run a gentle layout animation to place the new nodes naturally
       cy.layout({ 
         name: 'cose', 
         padding: 50,
         animate: true,
         animationDuration: 500,
-        randomize: false // Keep existing nodes roughly where they are
+        randomize: false
       }).run();
     }
   }, [graphElements]);

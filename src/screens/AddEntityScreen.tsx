@@ -5,7 +5,8 @@ import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const AddEntityScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { addNode, activeCaseId } = useCaseStore();
+  // FIXED: Removed the unused activeCaseId extraction
+  const { addNode } = useCaseStore();
   
   const [nodeType, setNodeType] = useState('person');
   const [label, setLabel] = useState('');
@@ -23,25 +24,19 @@ export const AddEntityScreen: React.FC = () => {
     e.preventDefault();
     if (!label.trim()) return;
     
-    // Add to global state
     addNode(nodeType, label.trim());
-    
-    // Immediately bounce the user back to the graph to see their new node
     navigate('/graph');
   };
 
   return (
     <div className="flex flex-col w-full h-full bg-[#0c0e14]">
-      {/* Header */}
       <div className="px-4 py-4 bg-[#14171f] border-b border-[#252a3a] pt-safe">
         <h1 className="text-xl font-mono text-[#dde1ec]">Add Entity</h1>
         <p className="text-[#7880a0] text-xs">Create a new intelligence node</p>
       </div>
 
-      {/* Form */}
       <div className="flex-1 p-4 overflow-y-auto">
         <form onSubmit={handleSubmit} className="space-y-6">
-          
           <div>
             <label className="block text-xs font-bold text-[#7880a0] mb-2 uppercase">Entity Type</label>
             <div className="grid grid-cols-2 gap-2">

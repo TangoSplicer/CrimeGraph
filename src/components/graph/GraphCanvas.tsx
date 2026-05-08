@@ -10,13 +10,9 @@ const nodeColors: Record<string, string> = {
 export const GraphCanvas: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
-  const { 
-    graphElements, 
-    setSelectedNodeId, 
-    connectingFromId, 
-    setConnectingFromId, 
-    addEdge 
-  } = useCaseStore();
+  
+  // FIXED: Only destructure graphElements. Everything else is handled via getState()
+  const { graphElements } = useCaseStore();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -58,27 +54,22 @@ export const GraphCanvas: React.FC = () => {
     
     cyRef.current = cy;
 
-    // TAP EVENT LISTENER
     cy.on('tap', (evt) => {
       const target = evt.target;
+      const state = useCaseStore.getState();
       
-      // If user tapped the empty background canvas
       if (target === cy) {
-        useCaseStore.getState().setSelectedNodeId(null);
+        state.setSelectedNodeId(null);
         return;
       }
 
-      // If user tapped a Node
       if (target.isNode()) {
         const targetId = target.id();
-        const state = useCaseStore.getState();
         
-        // Are we currently in "Draw Connection" mode?
         if (state.connectingFromId) {
-          addEdge(state.connectingFromId, targetId, 'LINKED_TO');
-          state.setConnectingFromId(null); // Exit drawing mode
+          state.addEdge(state.connectingFromId, targetId, 'LINKED_TO');
+          state.setConnectingFromId(null);
         } else {
-          // Normal mode: select node to show details
           state.setSelectedNodeId(targetId);
         }
       }
@@ -88,7 +79,6 @@ export const GraphCanvas: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Diffing engine for Reactivity
   useEffect(() => {
     if (!cyRef.current) return;
     const cy = cyRef.current;

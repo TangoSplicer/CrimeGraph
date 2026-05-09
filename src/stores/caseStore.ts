@@ -20,6 +20,8 @@ interface CaseState {
   loadCases: () => Promise<void>;
   setActiveCase: (id: string) => void;
   addCase: (title: string, caseType: string, classification: string) => Promise<void>;
+  archiveCase: (caseId: string) => Promise<void>;
+  restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
@@ -30,7 +32,7 @@ interface CaseState {
 
 export const useCaseStore = create<CaseState>((set, get) => ({
   cases: [],
-  activeCaseId: null, // Start with no case selected
+  activeCaseId: null,
   graphElements: [],
   selectedNodeId: null,
   connectingFromId: null,
@@ -50,7 +52,6 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   addCase: async (title, caseType, classification) => {
     const id = `case_${Date.now()}`;
-    // Generate a simple reference number
     const refNumber = `CG-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toISOString();
 
@@ -60,8 +61,26 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [id, refNumber, title, caseType, 'active', classification, now, now, now]
       );
-      get().loadCases(); // Refresh list
+      get().loadCases();
     } catch (e) { console.error('Failed to create case', e); }
+  },
+
+  archiveCase: async (caseId) => {
+    try {
+      const db = await getDb();
+      const now = new Date().toISOString();
+      await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [now, caseId]);
+      get().loadCases();
+    } catch (e) { console.error('Failed to archive case', e); }
+  },
+
+  restoreCase: async (caseId) => {
+    try {
+      const db = await getDb();
+      const now = new Date().toISOString();
+      await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [now, caseId]);
+      get().loadCases();
+    } catch (e) { console.error('Failed to restore case', e); }
   },
 
   loadGraphElements: async (caseId) => {
@@ -88,42 +107,26 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   addNode: async (nodeType, label, confidence) => {
     const { activeCaseId, graphElements } = get();
     if (!activeCaseId) return;
-    
     const id = `node_${Date.now()}`;
     const now = new Date().toISOString();
-    
     try {
       const db = await getDb();
-      await db.run(
-        'INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, activeCaseId, label, nodeType, confidence, now]
-      );
-      
-      const newNode: GraphElement = { data: { id, label, type: nodeType, confidence } };
-      set({ graphElements: [...graphElements, newNode] });
-    } catch (e) { console.error('Failed to insert node', e); }
+      await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, label, nodeType, confidence, now]);
+      set({ graphElements: [...graphElements, { data: { id, label, type: nodeType, confidence } }] });
+    } catch (e) { console.error(e); }
   },
 
   addEdge: async (sourceId, targetId, relationshipType) => {
     const { activeCaseId, graphElements } = get();
     if (!activeCaseId || sourceId === targetId) return;
-    
-    const exists = graphElements.some(e => e.data.source === sourceId && e.data.target === targetId);
-    if (exists) return;
-
+    if (graphElements.some(e => e.data.source === sourceId && e.data.target === targetId)) return;
     const id = `edge_${Date.now()}`;
     const now = new Date().toISOString();
-
     try {
       const db = await getDb();
-      await db.run(
-        'INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, activeCaseId, sourceId, targetId, relationshipType, now]
-      );
-
-      const newEdge: GraphElement = { data: { id, source: sourceId, target: targetId, label: relationshipType } };
-      set({ graphElements: [...graphElements, newEdge] });
-    } catch (e) { console.error('Failed to insert edge', e); }
+      await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, sourceId, targetId, relationshipType, now]);
+      set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: relationshipType } }] });
+    } catch (e) { console.error(e); }
   },
 
   deleteNode: async (nodeId) => {
@@ -132,13 +135,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const db = await getDb();
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
-
-      const remainingElements = graphElements.filter(e => 
-        e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId
-      );
-      
+      const remainingElements = graphElements.filter(e => e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId);
       set({ graphElements: remainingElements, selectedNodeId: null });
-    } catch (e) { console.error('Failed to delete node', e); }
+    } catch (e) { console.error(e); }
   },
 
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),

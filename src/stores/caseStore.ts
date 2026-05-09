@@ -19,6 +19,7 @@ interface CaseState {
   
   loadCases: () => Promise<void>;
   setActiveCase: (id: string) => void;
+  addCase: (title: string, caseType: string, classification: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
@@ -29,7 +30,7 @@ interface CaseState {
 
 export const useCaseStore = create<CaseState>((set, get) => ({
   cases: [],
-  activeCaseId: '1',
+  activeCaseId: null, // Start with no case selected
   graphElements: [],
   selectedNodeId: null,
   connectingFromId: null,
@@ -45,6 +46,22 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   setActiveCase: (id) => {
     set({ activeCaseId: id });
     get().loadGraphElements(id);
+  },
+
+  addCase: async (title, caseType, classification) => {
+    const id = `case_${Date.now()}`;
+    // Generate a simple reference number
+    const refNumber = `CG-${Math.floor(1000 + Math.random() * 9000)}`;
+    const now = new Date().toISOString();
+
+    try {
+      const db = await getDb();
+      await db.run(
+        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, refNumber, title, caseType, 'active', classification, now, now, now]
+      );
+      get().loadCases(); // Refresh list
+    } catch (e) { console.error('Failed to create case', e); }
   },
 
   loadGraphElements: async (caseId) => {
@@ -113,12 +130,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const { graphElements } = get();
     try {
       const db = await getDb();
-      // Delete relationships first to maintain integrity
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
-      // Then delete the node
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
 
-      // Filter state: remove the node AND any edge that touches it
       const remainingElements = graphElements.filter(e => 
         e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId
       );

@@ -1,25 +1,13 @@
 import { create } from 'zustand';
+import { getDb } from '../capacitor/db';
 
 export interface Case {
-  id: string;
-  reference_number: string;
-  title: string;
-  case_type: 'major_crime' | 'missing_person' | 'organised_crime' | 'other';
-  status: 'active' | 'pending_review' | 'closed' | 'archived';
-  classification: 'OFFICIAL' | 'OFFICIAL-SENSITIVE' | 'SECRET';
-  date_opened: string;
-  node_count?: number;
+  id: string; reference_number: string; title: string;
+  case_type: string; status: string; classification: string; date_opened: string; node_count?: number;
 }
 
 export interface GraphElement {
-  data: {
-    id: string;
-    label: string;
-    type?: string;
-    source?: string;
-    target?: string;
-    confidence?: number; // 🚀 NEW: Dynamic confidence rating
-  };
+  data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; };
 }
 
 interface CaseState {
@@ -31,68 +19,113 @@ interface CaseState {
   
   loadCases: () => Promise<void>;
   setActiveCase: (id: string) => void;
-  // 🚀 NEW: Added confidence parameter
-  addNode: (nodeType: string, label: string, confidence: number) => void;
-  addEdge: (sourceId: string, targetId: string, relationshipType: string) => void;
+  loadGraphElements: (caseId: string) => Promise<void>;
+  addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
+  addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
+  deleteNode: (nodeId: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void;
   setConnectingFromId: (id: string | null) => void;
 }
 
-const initialMockElements: GraphElement[] = [
-  { data: { id: 'n1', label: 'John DOE', type: 'person', confidence: 4 } },
-  { data: { id: 'n2', label: '07700 900123', type: 'phone', confidence: 5 } },
-  { data: { id: 'n3', label: 'Ford Transit (Blue)', type: 'vehicle', confidence: 3 } },
-  { data: { id: 'n4', label: 'Safehouse A', type: 'location', confidence: 2 } },
-  { data: { id: 'e1', source: 'n1', target: 'n2', label: 'OWNS' } },
-  { data: { id: 'e2', source: 'n1', target: 'n3', label: 'DRIVES' } },
-  { data: { id: 'e3', source: 'n3', target: 'n4', label: 'SEEN AT' } }
-];
-
-export const useCaseStore = create<CaseState>((set) => ({
+export const useCaseStore = create<CaseState>((set, get) => ({
   cases: [],
   activeCaseId: '1',
-  graphElements: initialMockElements,
+  graphElements: [],
   selectedNodeId: null,
   connectingFromId: null,
   
   loadCases: async () => {
-    const mockCases: Case[] = [
-      {
-        id: '1',
-        reference_number: 'OP-VANGUARD-26',
-        title: 'Operation Vanguard (O/C Network)',
-        case_type: 'organised_crime',
-        status: 'active',
-        classification: 'SECRET',
-        date_opened: new Date().toISOString(),
-        node_count: 142
-      }
-    ];
-    set({ cases: mockCases });
+    try {
+      const db = await getDb();
+      const res = await db.query('SELECT * FROM cases ORDER BY date_opened DESC');
+      set({ cases: res.values || [] });
+    } catch (e) { console.error('Failed to load cases', e); }
   },
 
-  setActiveCase: (id) => set({ activeCaseId: id }),
+  setActiveCase: (id) => {
+    set({ activeCaseId: id });
+    get().loadGraphElements(id);
+  },
 
-  // 🚀 NEW: Accepts and stores the confidence rating
-  addNode: (nodeType, label, confidence) => set((state) => {
-    const newNode: GraphElement = {
-      data: { id: `node_${Date.now()}`, label, type: nodeType, confidence }
-    };
-    return { graphElements: [...state.graphElements, newNode] };
-  }),
+  loadGraphElements: async (caseId) => {
+    try {
+      const db = await getDb();
+      const nodesRes = await db.query('SELECT * FROM nodes WHERE case_id = ?', [caseId]);
+      const edgesRes = await db.query('SELECT * FROM edges WHERE case_id = ?', [caseId]);
+      
+      const elements: GraphElement[] = [];
+      if (nodesRes.values) {
+        nodesRes.values.forEach((n: any) => elements.push({
+          data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence }
+        }));
+      }
+      if (edgesRes.values) {
+        edgesRes.values.forEach((e: any) => elements.push({
+          data: { id: e.id, source: e.source, target: e.target, label: e.label }
+        }));
+      }
+      set({ graphElements: elements });
+    } catch (e) { console.error('Failed to load graph', e); }
+  },
 
-  addEdge: (sourceId, targetId, relationshipType) => set((state) => {
-    if (sourceId === targetId) return state;
-    const exists = state.graphElements.some(
-      e => e.data.source === sourceId && e.data.target === targetId
-    );
-    if (exists) return state;
+  addNode: async (nodeType, label, confidence) => {
+    const { activeCaseId, graphElements } = get();
+    if (!activeCaseId) return;
+    
+    const id = `node_${Date.now()}`;
+    const now = new Date().toISOString();
+    
+    try {
+      const db = await getDb();
+      await db.run(
+        'INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, activeCaseId, label, nodeType, confidence, now]
+      );
+      
+      const newNode: GraphElement = { data: { id, label, type: nodeType, confidence } };
+      set({ graphElements: [...graphElements, newNode] });
+    } catch (e) { console.error('Failed to insert node', e); }
+  },
 
-    const newEdge: GraphElement = {
-      data: { id: `edge_${Date.now()}`, source: sourceId, target: targetId, label: relationshipType }
-    };
-    return { graphElements: [...state.graphElements, newEdge] };
-  }),
+  addEdge: async (sourceId, targetId, relationshipType) => {
+    const { activeCaseId, graphElements } = get();
+    if (!activeCaseId || sourceId === targetId) return;
+    
+    const exists = graphElements.some(e => e.data.source === sourceId && e.data.target === targetId);
+    if (exists) return;
+
+    const id = `edge_${Date.now()}`;
+    const now = new Date().toISOString();
+
+    try {
+      const db = await getDb();
+      await db.run(
+        'INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, activeCaseId, sourceId, targetId, relationshipType, now]
+      );
+
+      const newEdge: GraphElement = { data: { id, source: sourceId, target: targetId, label: relationshipType } };
+      set({ graphElements: [...graphElements, newEdge] });
+    } catch (e) { console.error('Failed to insert edge', e); }
+  },
+
+  deleteNode: async (nodeId) => {
+    const { graphElements } = get();
+    try {
+      const db = await getDb();
+      // Delete relationships first to maintain integrity
+      await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
+      // Then delete the node
+      await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
+
+      // Filter state: remove the node AND any edge that touches it
+      const remainingElements = graphElements.filter(e => 
+        e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId
+      );
+      
+      set({ graphElements: remainingElements, selectedNodeId: null });
+    } catch (e) { console.error('Failed to delete node', e); }
+  },
 
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   setConnectingFromId: (id) => set({ connectingFromId: id })

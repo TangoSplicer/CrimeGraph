@@ -2,6 +2,12 @@ import { CapacitorSQLite, SQLiteConnection, CapacitorSQLitePlugin } from '@capac
 
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
+let dbInstance: any = null;
+
+export async function getDb() {
+  if (dbInstance) return dbInstance;
+  return await initDatabase();
+}
 
 export async function initDatabase() {
   try {
@@ -17,35 +23,46 @@ export async function initDatabase() {
 
     const createTables = `
       CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        force_unit TEXT,
-        biometric_enabled INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL,
-        last_login TEXT,
-        is_active INTEGER DEFAULT 1
+        id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+        role TEXT NOT NULL, display_name TEXT NOT NULL, force_unit TEXT,
+        biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, is_active INTEGER DEFAULT 1
       );
 
       CREATE TABLE IF NOT EXISTS cases (
-        id TEXT PRIMARY KEY,
-        reference_number TEXT UNIQUE NOT NULL,
-        title TEXT NOT NULL,
-        case_type TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        lead_officer_id TEXT REFERENCES users(id),
-        classification TEXT NOT NULL DEFAULT 'OFFICIAL',
-        description TEXT,
-        date_opened TEXT NOT NULL,
-        date_closed TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
+        case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT,
+        classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL,
+        date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS nodes (
+        id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL,
+        type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS edges (
+        id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL,
+        target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id),
+        FOREIGN KEY(source) REFERENCES nodes(id),
+        FOREIGN KEY(target) REFERENCES nodes(id)
       );
     `;
     await db.execute(createTables);
+
+    // Auto-seed a dummy case if the database is completely empty
+    const res = await db.query("SELECT COUNT(*) as count FROM cases");
+    if (res.values && res.values[0].count === 0) {
+      const now = new Date().toISOString();
+      await db.run(
+        `INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['1', 'OP-VANGUARD-26', 'Operation Vanguard (O/C Network)', 'organised_crime', 'active', 'SECRET', now, now, now]
+      );
+    }
     
+    dbInstance = db;
     return db;
   } catch (error) {
     console.error('Database Error:', error);

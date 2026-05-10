@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { getDb } from '../capacitor/db';
+import { Share } from '@capacitor/share';
 
 export interface Case {
   id: string; reference_number: string; title: string;
@@ -7,35 +8,29 @@ export interface Case {
 }
 
 export interface GraphElement {
-  data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; };
+  data: { 
+    id: string; label: string; type?: string; source?: string; target?: string; 
+    confidence?: number; created_at?: string; 
+  };
 }
 
 interface CaseState {
-  cases: Case[];
-  activeCaseId: string | null;
-  graphElements: GraphElement[];
-  selectedNodeId: string | null;
-  connectingFromId: string | null;
+  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[];
+  selectedNodeId: string | null; connectingFromId: string | null;
   
-  loadCases: () => Promise<void>;
-  setActiveCase: (id: string) => void;
+  loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
   addCase: (title: string, caseType: string, classification: string) => Promise<void>;
-  archiveCase: (caseId: string) => Promise<void>;
-  restoreCase: (caseId: string) => Promise<void>;
+  archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
-  setSelectedNodeId: (id: string | null) => void;
-  setConnectingFromId: (id: string | null) => void;
+  setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
+  exportActiveCase: () => Promise<void>;
 }
 
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [],
-  activeCaseId: null,
-  graphElements: [],
-  selectedNodeId: null,
-  connectingFromId: null,
+  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, connectingFromId: null,
   
   loadCases: async () => {
     try {
@@ -45,16 +40,12 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     } catch (e) { console.error('Failed to load cases', e); }
   },
 
-  setActiveCase: (id) => {
-    set({ activeCaseId: id });
-    get().loadGraphElements(id);
-  },
+  setActiveCase: (id) => { set({ activeCaseId: id }); get().loadGraphElements(id); },
 
   addCase: async (title, caseType, classification) => {
     const id = `case_${Date.now()}`;
     const refNumber = `CG-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toISOString();
-
     try {
       const db = await getDb();
       await db.run(
@@ -62,46 +53,44 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         [id, refNumber, title, caseType, 'active', classification, now, now, now]
       );
       get().loadCases();
-    } catch (e) { console.error('Failed to create case', e); }
+    } catch (e) { console.error(e); }
   },
 
   archiveCase: async (caseId) => {
     try {
       const db = await getDb();
-      const now = new Date().toISOString();
-      await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [now, caseId]);
+      await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
       get().loadCases();
-    } catch (e) { console.error('Failed to archive case', e); }
+    } catch (e) { console.error(e); }
   },
 
   restoreCase: async (caseId) => {
     try {
       const db = await getDb();
-      const now = new Date().toISOString();
-      await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [now, caseId]);
+      await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
       get().loadCases();
-    } catch (e) { console.error('Failed to restore case', e); }
+    } catch (e) { console.error(e); }
   },
 
   loadGraphElements: async (caseId) => {
     try {
       const db = await getDb();
-      const nodesRes = await db.query('SELECT * FROM nodes WHERE case_id = ?', [caseId]);
-      const edgesRes = await db.query('SELECT * FROM edges WHERE case_id = ?', [caseId]);
+      const nodesRes = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
+      const edgesRes = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
       
       const elements: GraphElement[] = [];
       if (nodesRes.values) {
         nodesRes.values.forEach((n: any) => elements.push({
-          data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence }
+          data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence, created_at: n.created_at }
         }));
       }
       if (edgesRes.values) {
         edgesRes.values.forEach((e: any) => elements.push({
-          data: { id: e.id, source: e.source, target: e.target, label: e.label }
+          data: { id: e.id, source: e.source, target: e.target, label: e.label, created_at: e.created_at }
         }));
       }
       set({ graphElements: elements });
-    } catch (e) { console.error('Failed to load graph', e); }
+    } catch (e) { console.error(e); }
   },
 
   addNode: async (nodeType, label, confidence) => {
@@ -112,7 +101,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     try {
       const db = await getDb();
       await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, label, nodeType, confidence, now]);
-      set({ graphElements: [...graphElements, { data: { id, label, type: nodeType, confidence } }] });
+      set({ graphElements: [...graphElements, { data: { id, label, type: nodeType, confidence, created_at: now } }] });
     } catch (e) { console.error(e); }
   },
 
@@ -125,7 +114,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     try {
       const db = await getDb();
       await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, sourceId, targetId, relationshipType, now]);
-      set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: relationshipType } }] });
+      set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: relationshipType, created_at: now } }] });
     } catch (e) { console.error(e); }
   },
 
@@ -141,5 +130,45 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
-  setConnectingFromId: (id) => set({ connectingFromId: id })
+  setConnectingFromId: (id) => set({ connectingFromId: id }),
+
+  // 🚀 PHASE 8: Export Engine
+  exportActiveCase: async () => {
+    const { activeCaseId, cases, graphElements } = get();
+    const activeCase = cases.find(c => c.id === activeCaseId);
+    if (!activeCase) return;
+
+    const exportData = {
+      metadata: {
+        reference: activeCase.reference_number,
+        title: activeCase.title,
+        classification: activeCase.classification,
+        exported_at: new Date().toISOString(),
+        system: "CrimeGraph v1.0"
+      },
+      intelligence_nodes: graphElements.filter(e => !e.data.source),
+      relationships: graphElements.filter(e => e.data.source)
+    };
+
+    try {
+      // Create a Blob from the JSON data
+      const jsonStr = JSON.stringify(exportData, null, 2);
+      
+      // Attempt to invoke the native share sheet
+      const canShare = await Share.canShare();
+      if (canShare.value) {
+        await Share.share({
+          title: `Intelligence Package: ${activeCase.reference_number}`,
+          text: `Encrypted Intelligence Data for ${activeCase.title}`,
+          url: `data:application/json;base64,${btoa(jsonStr)}`,
+          dialogTitle: 'Export Intelligence Package',
+        });
+      } else {
+        alert("Device does not support native sharing.");
+      }
+    } catch (error) {
+      console.error('Export failed', error);
+      alert('Failed to export case data.');
+    }
+  }
 }));

@@ -10,16 +10,13 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const { 
     graphElements, selectedNodeId, setSelectedNodeId, 
     connectingFromId, setConnectingFromId, deleteNode, 
-    activeCaseId, cases
+    activeCaseId, cases, exportActiveCase
   } = useCaseStore();
   
   const activeCase = cases.find(c => c.id === activeCaseId);
 
-  // If no case is selected, redirect back to Dashboard
   useEffect(() => {
-    if (!activeCaseId) {
-      navigate('/');
-    }
+    if (!activeCaseId) navigate('/');
   }, [activeCaseId, navigate]);
 
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
@@ -45,13 +42,21 @@ export const GraphWorkspaceScreen: React.FC = () => {
     <div className="flex flex-col w-full h-full bg-[#0c0e14] relative">
       <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe z-10 flex justify-between items-center shadow-md">
         <div>
-          {/* 🚀 FIXED: Dynamic Title Injection */}
           <h2 className="text-sm font-mono text-[#3a7bd5]">{activeCase.reference_number}</h2>
           <p className="text-[10px] text-[#7880a0] truncate w-48">{activeCase.title}</p>
         </div>
-        <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-[#454d66] text-[#dde1ec] bg-[#252a3a]">
-          {activeCase.classification}
-        </span>
+        <div className="flex items-center space-x-2">
+          {/* 🚀 Phase 8: Export Button */}
+          <button 
+            onClick={exportActiveCase}
+            className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors"
+          >
+            EXPORT
+          </button>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-[#454d66] text-[#dde1ec] bg-[#252a3a]">
+            {activeCase.classification}
+          </span>
+        </div>
       </div>
 
       {connectingFromId && (

@@ -9,6 +9,7 @@ import { DashboardScreen } from './screens/DashboardScreen';
 import { GraphWorkspaceScreen } from './screens/GraphWorkspaceScreen';
 import { AddEntityScreen } from './screens/AddEntityScreen';
 import { CreateCaseScreen } from './screens/CreateCaseScreen';
+import { TimelineScreen } from './screens/TimelineScreen';
 
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
@@ -40,6 +41,7 @@ const App: React.FC = () => {
             <Route path="/new-case" element={<CreateCaseScreen />} />
             <Route path="/graph" element={<GraphWorkspaceScreen />} />
             <Route path="/add" element={<AddEntityScreen />} />
+            <Route path="/timeline" element={<TimelineScreen />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

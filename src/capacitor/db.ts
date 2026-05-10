@@ -48,20 +48,18 @@ export async function initDatabase() {
         FOREIGN KEY(source) REFERENCES nodes(id),
         FOREIGN KEY(target) REFERENCES nodes(id)
       );
+
+      -- 🚀 PHASE 9: Immutable Audit Ledger
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_id TEXT,
+        details TEXT
+      );
     `;
     await db.execute(createTables);
-
-    // Auto-seed a dummy case if the database is completely empty
-    const res = await db.query("SELECT COUNT(*) as count FROM cases");
-    if (res.values && res.values[0].count === 0) {
-      const now = new Date().toISOString();
-      await db.run(
-        `INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['1', 'OP-VANGUARD-26', 'Operation Vanguard (O/C Network)', 'organised_crime', 'active', 'SECRET', now, now, now]
-      );
-    }
-    
     dbInstance = db;
     return db;
   } catch (error) {

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { getDb } from '../capacitor/db';
 import { Share } from '@capacitor/share';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 
 export interface Case {
@@ -155,8 +156,6 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   exportActiveCase: async () => {
     const { activeCaseId, cases, graphElements } = get();
-    
-    // 🚀 FIXED: Explicit null check to satisfy TypeScript
     if (!activeCaseId) return;
     
     const activeCase = cases.find(c => c.id === activeCaseId);
@@ -177,20 +176,33 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     };
 
     try {
+      // 🚀 FIXED: Generate file name and stringify JSON
       const jsonStr = JSON.stringify(exportData, null, 2);
+      const fileName = `intelligence_pkg_${activeCase.reference_number}.json`;
+
+      // 🚀 FIXED: Write the physical file to the device's native cache directory
+      const fileResult = await Filesystem.writeFile({
+        path: fileName,
+        data: jsonStr,
+        directory: Directory.Cache,
+        encoding: Encoding.UTF8,
+      });
+
       const canShare = await Share.canShare();
       if (canShare.value) {
+        // 🚀 FIXED: Pass the native file:// URI to the Share sheet
         await Share.share({
           title: `Intelligence Package: ${activeCase.reference_number}`,
           text: `Encrypted Intelligence Data for ${activeCase.title}`,
-          url: `data:application/json;base64,${btoa(jsonStr)}`,
+          url: fileResult.uri,
           dialogTitle: 'Export Intelligence Package',
         });
       } else {
         alert("Device does not support native sharing.");
       }
     } catch (error) {
-      alert('Failed to export case data.');
+      console.error('Export failed:', error);
+      alert('Failed to export case data. See logs for details.');
     }
   }
 }));

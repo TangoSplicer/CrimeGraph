@@ -30,11 +30,9 @@ interface CaseState {
   exportActiveCase: () => Promise<void>;
 }
 
-// 🚀 PHASE 9: Helper function to write to the Audit Ledger
 const logAudit = async (action: string, targetId: string, details: string) => {
   try {
     const db = await getDb();
-    // Dynamically fetch the ID of the officer currently logged into the app
     const userId = useAuthStore.getState().currentUser?.id || 'SYSTEM_UNKNOWN';
     const id = `audit_${Date.now()}`;
     await db.run(
@@ -42,7 +40,7 @@ const logAudit = async (action: string, targetId: string, details: string) => {
       [id, new Date().toISOString(), userId, action, targetId, details]
     );
   } catch (e) {
-    // In a production app, failure to audit might lock the app. We silently fail for now.
+    console.error('Audit log failed', e);
   }
 };
 
@@ -157,6 +155,10 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   exportActiveCase: async () => {
     const { activeCaseId, cases, graphElements } = get();
+    
+    // 🚀 FIXED: Explicit null check to satisfy TypeScript
+    if (!activeCaseId) return;
+    
     const activeCase = cases.find(c => c.id === activeCaseId);
     if (!activeCase) return;
 

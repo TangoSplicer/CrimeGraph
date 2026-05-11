@@ -21,7 +21,8 @@ interface CaseState {
   selectedNodeId: string | null; connectingFromId: string | null;
   
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
-  addCase: (title: string, caseType: string, classification: string) => Promise<void>;
+  // 🚀 UPDATED: Now accepts a custom reference number
+  addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
   archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
@@ -29,6 +30,8 @@ interface CaseState {
   deleteNode: (nodeId: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>;
+  // 🚀 NEW: Import function
+  importCase: (jsonData: string) => Promise<void>;
 }
 
 const logAudit = async (action: string, targetId: string, details: string) => {
@@ -58,9 +61,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   setActiveCase: (id) => { set({ activeCaseId: id }); get().loadGraphElements(id); },
 
-  addCase: async (title, caseType, classification) => {
+  // 🚀 UPDATED: Uses user's refNumber
+  addCase: async (title, refNumber, caseType, classification) => {
     const id = `case_${Date.now()}`;
-    const refNumber = `CG-${Math.floor(1000 + Math.random() * 9000)}`;
     const now = new Date().toISOString();
     try {
       const db = await getDb();
@@ -157,7 +160,6 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   exportActiveCase: async () => {
     const { activeCaseId, cases, graphElements } = get();
     if (!activeCaseId) return;
-    
     const activeCase = cases.find(c => c.id === activeCaseId);
     if (!activeCase) return;
 
@@ -176,11 +178,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     };
 
     try {
-      // 🚀 FIXED: Generate file name and stringify JSON
       const jsonStr = JSON.stringify(exportData, null, 2);
       const fileName = `intelligence_pkg_${activeCase.reference_number}.json`;
 
-      // 🚀 FIXED: Write the physical file to the device's native cache directory
       const fileResult = await Filesystem.writeFile({
         path: fileName,
         data: jsonStr,
@@ -190,7 +190,6 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
       const canShare = await Share.canShare();
       if (canShare.value) {
-        // 🚀 FIXED: Pass the native file:// URI to the Share sheet
         await Share.share({
           title: `Intelligence Package: ${activeCase.reference_number}`,
           text: `Encrypted Intelligence Data for ${activeCase.title}`,
@@ -203,6 +202,57 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     } catch (error) {
       console.error('Export failed:', error);
       alert('Failed to export case data. See logs for details.');
+    }
+  },
+
+  // 🚀 NEW: Import Engine
+  importCase: async (jsonData: string) => {
+    try {
+      const data = JSON.parse(jsonData);
+      if (!data.metadata || !data.intelligence_nodes) throw new Error("Invalid format");
+
+      const db = await getDb();
+      const newCaseId = `case_${Date.now()}`;
+      const now = new Date().toISOString();
+
+      // Append (Imported) so you know it's a clone
+      const refNumber = `${data.metadata.reference}-IMP`;
+      const title = `${data.metadata.title} (Imported)`;
+
+      await db.run(
+        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [newCaseId, refNumber, title, 'other', 'active', data.metadata.classification || 'OFFICIAL', now, now, now]
+      );
+
+      // Create an ID mapping dictionary so we don't accidentally overwrite existing nodes
+      const idMap = new Map<string, string>();
+
+      for (const node of data.intelligence_nodes) {
+        const newNodeId = `node_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+        idMap.set(node.data.id, newNodeId);
+        await db.run(
+          'INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [newNodeId, newCaseId, node.data.label, node.data.type, node.data.confidence, node.data.created_at || now]
+        );
+      }
+
+      for (const edge of data.relationships) {
+        const newEdgeId = `edge_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+        const newSource = idMap.get(edge.data.source);
+        const newTarget = idMap.get(edge.data.target);
+        if (newSource && newTarget) {
+          await db.run(
+            'INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]
+          );
+        }
+      }
+
+      get().loadCases();
+      await logAudit('IMPORT_CASE', newCaseId, `Imported package: ${title}`);
+    } catch (e) {
+      console.error('Import failed', e);
+      throw e;
     }
   }
 }));

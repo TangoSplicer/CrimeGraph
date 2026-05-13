@@ -69,7 +69,7 @@ export const DashboardScreen: React.FC = () => {
           <p className="text-[#7880a0] text-xs mt-1">Select a database to load</p>
         </div>
         <div className="flex space-x-2">
-          <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+          <input type="file" accept=".enc,.json" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
           <button onClick={handleImportClick} className="bg-[#1c2030] text-[#dde1ec] border border-[#454d66] text-xs font-bold px-3 py-2 rounded shadow-md hover:bg-[#252a3a]">
             IMPORT
           </button>

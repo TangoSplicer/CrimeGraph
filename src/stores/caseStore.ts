@@ -3,25 +3,14 @@ import { getDb } from '../capacitor/db';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
+import { encryptPackage, decryptPackage } from '../capacitor/crypto';
 
-export interface Case {
-  id: string; reference_number: string; title: string;
-  case_type: string; status: string; classification: string; date_opened: string; node_count?: number;
-}
-
-export interface GraphElement {
-  data: { 
-    id: string; label: string; type?: string; source?: string; target?: string; 
-    confidence?: number; created_at?: string; 
-  };
-}
+export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; node_count?: number; }
+export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; }; }
 
 interface CaseState {
-  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[];
-  selectedNodeId: string | null; connectingFromId: string | null;
-  
+  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; selectedNodeId: string | null; connectingFromId: string | null;
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
-  // 🚀 UPDATED: Now accepts a custom reference number
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
   archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
@@ -29,23 +18,15 @@ interface CaseState {
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
-  exportActiveCase: () => Promise<void>;
-  // 🚀 NEW: Import function
-  importCase: (jsonData: string) => Promise<void>;
+  exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
 }
 
 const logAudit = async (action: string, targetId: string, details: string) => {
   try {
     const db = await getDb();
     const userId = useAuthStore.getState().currentUser?.id || 'SYSTEM_UNKNOWN';
-    const id = `audit_${Date.now()}`;
-    await db.run(
-      'INSERT INTO audit_logs (id, timestamp, user_id, action, target_id, details) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, new Date().toISOString(), userId, action, targetId, details]
-    );
-  } catch (e) {
-    console.error('Audit log failed', e);
-  }
+    await db.run('INSERT INTO audit_logs (id, timestamp, user_id, action, target_id, details) VALUES (?, ?, ?, ?, ?, ?)', [`audit_${Date.now()}`, new Date().toISOString(), userId, action, targetId, details]);
+  } catch (e) {}
 };
 
 export const useCaseStore = create<CaseState>((set, get) => ({
@@ -61,16 +42,12 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   setActiveCase: (id) => { set({ activeCaseId: id }); get().loadGraphElements(id); },
 
-  // 🚀 UPDATED: Uses user's refNumber
   addCase: async (title, refNumber, caseType, classification) => {
     const id = `case_${Date.now()}`;
     const now = new Date().toISOString();
     try {
       const db = await getDb();
-      await db.run(
-        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, refNumber, title, caseType, 'active', classification, now, now, now]
-      );
+      await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, refNumber, title, caseType, 'active', classification, now, now, now]);
       await logAudit('CREATE_CASE', id, `Created ${refNumber}: ${title}`);
       get().loadCases();
     } catch (e) { console.error(e); }
@@ -99,18 +76,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const db = await getDb();
       const nodesRes = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
       const edgesRes = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
-      
       const elements: GraphElement[] = [];
-      if (nodesRes.values) {
-        nodesRes.values.forEach((n: any) => elements.push({
-          data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence, created_at: n.created_at }
-        }));
-      }
-      if (edgesRes.values) {
-        edgesRes.values.forEach((e: any) => elements.push({
-          data: { id: e.id, source: e.source, target: e.target, label: e.label, created_at: e.created_at }
-        }));
-      }
+      if (nodesRes.values) nodesRes.values.forEach((n: any) => elements.push({ data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence, created_at: n.created_at } }));
+      if (edgesRes.values) edgesRes.values.forEach((e: any) => elements.push({ data: { id: e.id, source: e.source, target: e.target, label: e.label, created_at: e.created_at } }));
       set({ graphElements: elements });
     } catch (e) { console.error(e); }
   },
@@ -163,7 +131,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const activeCase = cases.find(c => c.id === activeCaseId);
     if (!activeCase) return;
 
-    await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported intelligence package to external sheet');
+    // 🚀 NEW: Prompt for Export Password
+    const password = window.prompt("SECURE EXPORT: Enter a strong password to encrypt this intelligence package:");
+    if (!password) {
+      alert("Export cancelled. A password is required.");
+      return;
+    }
+
+    await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported Encrypted intelligence package');
 
     const exportData = {
       metadata: {
@@ -179,11 +154,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
     try {
       const jsonStr = JSON.stringify(exportData, null, 2);
-      const fileName = `intelligence_pkg_${activeCase.reference_number}.json`;
+      // 🚀 Encrypt the JSON Payload
+      const encryptedPayload = await encryptPackage(jsonStr, password);
+      // Change extension to .enc to signify it is ciphertext
+      const fileName = `intelligence_pkg_${activeCase.reference_number}.enc`;
 
       const fileResult = await Filesystem.writeFile({
         path: fileName,
-        data: jsonStr,
+        data: encryptedPayload,
         directory: Directory.Cache,
         encoding: Encoding.UTF8,
       });
@@ -192,67 +170,61 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const canShare = await Share.canShare();
       if (canShare.value) {
         await Share.share({
-          title: `Intelligence Package: ${activeCase.reference_number}`,
-          text: `Encrypted Intelligence Data for ${activeCase.title}`,
+          title: `Encrypted Package: ${activeCase.reference_number}`,
+          text: `AES-GCM Encrypted Intelligence Data for ${activeCase.title}`,
           url: fileResult.uri,
-          dialogTitle: 'Export Intelligence Package',
+          dialogTitle: 'Export Secure Package',
         });
       } else {
         alert("Device does not support native sharing.");
       }
     } catch (error) {
       console.error('Export failed:', error);
-      alert('Failed to export case data. See logs for details.');
+      alert('Failed to encrypt and export case data.');
     }
   },
 
-  // 🚀 NEW: Import Engine
-  importCase: async (jsonData: string) => {
+  importCase: async (encryptedData: string) => {
+    // 🚀 NEW: Prompt for Import Password
+    const password = window.prompt("SECURE IMPORT: Enter the decryption password for this package:");
+    if (!password) {
+      alert("Import cancelled. Password required.");
+      return;
+    }
+
     try {
-      const data = JSON.parse(jsonData);
+      // 🚀 Decrypt the payload before parsing
+      const jsonStr = await decryptPackage(encryptedData, password);
+      const data = JSON.parse(jsonStr);
       if (!data.metadata || !data.intelligence_nodes) throw new Error("Invalid format");
 
       const db = await getDb();
       const newCaseId = `case_${Date.now()}`;
       const now = new Date().toISOString();
-
-      // Append (Imported) so you know it's a clone
       const refNumber = `${data.metadata.reference}-IMP`;
       const title = `${data.metadata.title} (Imported)`;
 
-      await db.run(
-        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [newCaseId, refNumber, title, 'other', 'active', data.metadata.classification || 'OFFICIAL', now, now, now]
-      );
+      await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [newCaseId, refNumber, title, 'other', 'active', data.metadata.classification || 'OFFICIAL', now, now, now]);
 
-      // Create an ID mapping dictionary so we don't accidentally overwrite existing nodes
       const idMap = new Map<string, string>();
-
       for (const node of data.intelligence_nodes) {
         const newNodeId = `node_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
         idMap.set(node.data.id, newNodeId);
-        await db.run(
-          'INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-          [newNodeId, newCaseId, node.data.label, node.data.type, node.data.confidence, node.data.created_at || now]
-        );
+        await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)', [newNodeId, newCaseId, node.data.label, node.data.type, node.data.confidence, node.data.created_at || now]);
       }
-
       for (const edge of data.relationships) {
         const newEdgeId = `edge_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
         const newSource = idMap.get(edge.data.source);
         const newTarget = idMap.get(edge.data.target);
         if (newSource && newTarget) {
-          await db.run(
-            'INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]
-          );
+          await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]);
         }
       }
-
       get().loadCases();
-      await logAudit('IMPORT_CASE', newCaseId, `Imported package: ${title}`);
+      await logAudit('IMPORT_CASE', newCaseId, `Imported decrypted package: ${title}`);
     } catch (e) {
       console.error('Import failed', e);
+      alert('Decryption failed. Incorrect password or corrupted file.');
       throw e;
     }
   }

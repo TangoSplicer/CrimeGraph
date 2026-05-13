@@ -7,15 +7,21 @@ export const CreateCaseScreen: React.FC = () => {
   const navigate = useNavigate();
   const { addCase } = useCaseStore();
   const [title, setTitle] = useState('');
-  const [refNumber, setRefNumber] = useState(''); // 🚀 NEW: State for custom URN
+  const [refNumber, setRefNumber] = useState('');
   const [caseType, setCaseType] = useState('major_crime');
   const [classification, setClassification] = useState('OFFICIAL');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !refNumber.trim()) return;
-    await addCase(title.trim(), refNumber.trim().toUpperCase(), caseType, classification);
-    navigate('/');
+    
+    try {
+      await addCase(title.trim(), refNumber.trim().toUpperCase(), caseType, classification);
+      navigate('/');
+    } catch (error) {
+      // 🚀 FIXED: Alert the user instead of failing silently
+      alert("Failed to create Operation. The URN/Reference Number must be completely unique. Please ensure this reference isn't already used in your Active or Archived tabs.");
+    }
   };
 
   return (
@@ -31,7 +37,6 @@ export const CreateCaseScreen: React.FC = () => {
       <div className="flex-1 p-4 overflow-y-auto">
         <form onSubmit={handleSubmit} className="space-y-6">
           
-          {/* 🚀 NEW: Input field for URN/Reference Number */}
           <div>
             <label className="block text-xs font-bold text-[#7880a0] mb-2 uppercase">Reference No. / URN</label>
             <input 

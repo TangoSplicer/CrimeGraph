@@ -50,7 +50,11 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, refNumber, title, caseType, 'active', classification, now, now, now]);
       await logAudit('CREATE_CASE', id, `Created ${refNumber}: ${title}`);
       get().loadCases();
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error('Database rejection:', e); 
+      // 🚀 FIXED: Throw the error so the UI knows the SQLite constraints failed
+      throw new Error('Database rejected creation. Check uniqueness.');
+    }
   },
 
   archiveCase: async (caseId) => {
@@ -131,69 +135,35 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const activeCase = cases.find(c => c.id === activeCaseId);
     if (!activeCase) return;
 
-    // 🚀 NEW: Prompt for Export Password
     const password = window.prompt("SECURE EXPORT: Enter a strong password to encrypt this intelligence package:");
-    if (!password) {
-      alert("Export cancelled. A password is required.");
-      return;
-    }
+    if (!password) { alert("Export cancelled. A password is required."); return; }
 
     await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported Encrypted intelligence package');
 
     const exportData = {
-      metadata: {
-        reference: activeCase.reference_number,
-        title: activeCase.title,
-        classification: activeCase.classification,
-        exported_at: new Date().toISOString(),
-        system: "CrimeGraph v1.0"
-      },
-      intelligence_nodes: graphElements.filter(e => !e.data.source),
-      relationships: graphElements.filter(e => e.data.source)
+      metadata: { reference: activeCase.reference_number, title: activeCase.title, classification: activeCase.classification, exported_at: new Date().toISOString(), system: "CrimeGraph v1.0" },
+      intelligence_nodes: graphElements.filter(e => !e.data.source), relationships: graphElements.filter(e => e.data.source)
     };
 
     try {
       const jsonStr = JSON.stringify(exportData, null, 2);
-      // 🚀 Encrypt the JSON Payload
       const encryptedPayload = await encryptPackage(jsonStr, password);
-      // Change extension to .enc to signify it is ciphertext
       const fileName = `intelligence_pkg_${activeCase.reference_number}.enc`;
 
-      const fileResult = await Filesystem.writeFile({
-        path: fileName,
-        data: encryptedPayload,
-        directory: Directory.Cache,
-        encoding: Encoding.UTF8,
-      });
-
+      const fileResult = await Filesystem.writeFile({ path: fileName, data: encryptedPayload, directory: Directory.Cache, encoding: Encoding.UTF8 });
       useAuthStore.getState().setIntentionalBackground(true);
       const canShare = await Share.canShare();
       if (canShare.value) {
-        await Share.share({
-          title: `Encrypted Package: ${activeCase.reference_number}`,
-          text: `AES-GCM Encrypted Intelligence Data for ${activeCase.title}`,
-          url: fileResult.uri,
-          dialogTitle: 'Export Secure Package',
-        });
-      } else {
-        alert("Device does not support native sharing.");
-      }
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Failed to encrypt and export case data.');
-    }
+        await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Encrypted Intelligence Data for ${activeCase.title}`, url: fileResult.uri, dialogTitle: 'Export Secure Package' });
+      } else { alert("Device does not support native sharing."); }
+    } catch (error) { console.error('Export failed:', error); alert('Failed to encrypt and export case data.'); }
   },
 
   importCase: async (encryptedData: string) => {
-    // 🚀 NEW: Prompt for Import Password
     const password = window.prompt("SECURE IMPORT: Enter the decryption password for this package:");
-    if (!password) {
-      alert("Import cancelled. Password required.");
-      return;
-    }
+    if (!password) { alert("Import cancelled. Password required."); return; }
 
     try {
-      // 🚀 Decrypt the payload before parsing
       const jsonStr = await decryptPackage(encryptedData, password);
       const data = JSON.parse(jsonStr);
       if (!data.metadata || !data.intelligence_nodes) throw new Error("Invalid format");

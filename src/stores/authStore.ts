@@ -9,36 +9,43 @@ interface User {
 
 interface AuthState {
   isLocked: boolean;
+  currentUser: User | null;
+  currentSessionId: string | null;
   lastActivityAt: number;
   lockTimeoutMs: number;
-  sessionId: string | null;
-  currentUser: User | null;
-  unlockMethod: 'password' | 'biometric' | null;
-  recordActivity: () => void;
-  lock: () => void;
+  authMethod: 'password' | 'biometric' | null;
+  isIntentionalBackground: boolean; // 🚀 NEW: Prevents locking during native UI prompts
+  
   unlock: (method: 'password' | 'biometric', user: User, sessionId: string) => void;
+  lock: () => void;
+  recordActivity: () => void;
+  setIntentionalBackground: (isIntentional: boolean) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   isLocked: true,
-  lastActivityAt: Date.now(),
-  lockTimeoutMs: 120000,
-  sessionId: null,
   currentUser: null,
-  unlockMethod: null,
+  currentSessionId: null,
+  lastActivityAt: Date.now(),
+  lockTimeoutMs: 5 * 60 * 1000, // 5 minutes
+  authMethod: null,
+  isIntentionalBackground: false,
+
+  unlock: (method, user, sessionId) => set({
+    isLocked: false,
+    authMethod: method,
+    currentUser: user,
+    currentSessionId: sessionId,
+    lastActivityAt: Date.now()
+  }),
+  
+  lock: () => set({
+    isLocked: true,
+    authMethod: null,
+    // We intentionally keep currentUser to allow biometric unlock
+  }),
   
   recordActivity: () => set({ lastActivityAt: Date.now() }),
-  
-  lock: () => set({ 
-    isLocked: true,
-    unlockMethod: null 
-  }),
-  
-  unlock: (method, user, sessionId) => set({ 
-    isLocked: false, 
-    lastActivityAt: Date.now(),
-    currentUser: user,
-    sessionId: sessionId,
-    unlockMethod: method
-  }),
+
+  setIntentionalBackground: (isIntentional) => set({ isIntentionalBackground: isIntentional })
 }));

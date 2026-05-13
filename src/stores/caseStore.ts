@@ -188,6 +188,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         encoding: Encoding.UTF8,
       });
 
+      useAuthStore.getState().setIntentionalBackground(true);
       const canShare = await Share.canShare();
       if (canShare.value) {
         await Share.share({

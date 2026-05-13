@@ -14,21 +14,40 @@ import { TimelineScreen } from './screens/TimelineScreen';
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
 const App: React.FC = () => {
-  const { isLocked, recordActivity, lock, lockTimeoutMs, lastActivityAt } = useAuthStore();
+  const { isLocked, recordActivity, lockTimeoutMs, lastActivityAt } = useAuthStore();
 
   useEffect(() => {
     initDatabase().catch(console.error);
+    
     if (Capacitor.isNativePlatform()) {
       PrivacyScreen.enable().catch(console.error);
+      
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) lock();
+        const state = useAuthStore.getState();
+        if (!isActive) {
+          // 🚀 FIXED: Only lock if the user didn't intentionally invoke a native OS screen
+          if (!state.isIntentionalBackground) {
+            state.lock();
+          }
+        } else {
+          // 🚀 FIXED: When app resumes, reset the flag and reset the timeout timer
+          if (state.isIntentionalBackground) {
+            state.setIntentionalBackground(false);
+            state.recordActivity();
+          }
+        }
       });
     }
+
     const timer = setInterval(() => {
-      if (!isLocked && Date.now() - lastActivityAt > lockTimeoutMs) lock();
+      const state = useAuthStore.getState();
+      if (!state.isLocked && Date.now() - state.lastActivityAt > state.lockTimeoutMs) {
+        state.lock();
+      }
     }, 5000);
+    
     return () => clearInterval(timer);
-  }, [isLocked, lastActivityAt, lockTimeoutMs, lock]);
+  }, []); // Removed dependencies to prevent infinite listener attachment loops
 
   return (
     <div className="w-full h-screen relative flex flex-col items-center justify-center bg-[#0c0e14] text-[#dde1ec]" onClick={recordActivity} onTouchStart={recordActivity}>

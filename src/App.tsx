@@ -14,7 +14,8 @@ import { TimelineScreen } from './screens/TimelineScreen';
 const PrivacyScreen = registerPlugin<any>('PrivacyScreen');
 
 const App: React.FC = () => {
-  const { isLocked, recordActivity, lockTimeoutMs, lastActivityAt } = useAuthStore();
+  // 🚀 FIXED: Removed the unused lockTimeoutMs and lastActivityAt variables
+  const { isLocked, recordActivity } = useAuthStore();
 
   useEffect(() => {
     initDatabase().catch(console.error);
@@ -25,12 +26,10 @@ const App: React.FC = () => {
       CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         const state = useAuthStore.getState();
         if (!isActive) {
-          // 🚀 FIXED: Only lock if the user didn't intentionally invoke a native OS screen
           if (!state.isIntentionalBackground) {
             state.lock();
           }
         } else {
-          // 🚀 FIXED: When app resumes, reset the flag and reset the timeout timer
           if (state.isIntentionalBackground) {
             state.setIntentionalBackground(false);
             state.recordActivity();
@@ -40,6 +39,7 @@ const App: React.FC = () => {
     }
 
     const timer = setInterval(() => {
+      // 🚀 Using getState() here prevents staleness, which is why we didn't need the variables above
       const state = useAuthStore.getState();
       if (!state.isLocked && Date.now() - state.lastActivityAt > state.lockTimeoutMs) {
         state.lock();
@@ -47,7 +47,7 @@ const App: React.FC = () => {
     }, 5000);
     
     return () => clearInterval(timer);
-  }, []); // Removed dependencies to prevent infinite listener attachment loops
+  }, []);
 
   return (
     <div className="w-full h-screen relative flex flex-col items-center justify-center bg-[#0c0e14] text-[#dde1ec]" onClick={recordActivity} onTouchStart={recordActivity}>

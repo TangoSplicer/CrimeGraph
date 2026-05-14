@@ -76,19 +76,20 @@ export const GraphWorkspaceScreen: React.FC = () => {
         </div>
       )}
 
+      {/* 🚀 FIXED: Map Container */}
       <div className="flex-1 relative overflow-hidden">
         <GraphCanvas />
+        
+        {/* 🚀 FIXED: The FAB is now explicitly INSIDE the relative map container, anchored 24px from the bottom right with a massive z-index */}
+        {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
+          <button 
+            onClick={() => navigate('/add')}
+            className="absolute bottom-6 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all"
+          >
+            +
+          </button>
+        )}
       </div>
-
-      {/* 🚀 FIXED: The Floating Action Button (FAB) is back! */}
-      {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
-        <button 
-          onClick={() => navigate('/add')}
-          className="absolute bottom-20 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_15px_rgba(58,123,213,0.4)] z-30 hover:bg-[#4a8be5] transition-colors"
-        >
-          +
-        </button>
-      )}
 
       <BottomSheet 
         isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} 
@@ -105,7 +106,6 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
-            {/* 🚀 FIXED: Added padding bottom to ensure buttons clear the mobile safe area */}
             <div className="grid grid-cols-2 gap-4 pt-4 pb-4">
               <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded hover:bg-[#4a8be5]">Draw Connection</button>
               <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded hover:bg-[#c0392b] hover:text-white">Delete Node</button>

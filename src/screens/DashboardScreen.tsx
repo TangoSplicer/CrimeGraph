@@ -38,12 +38,8 @@ export const DashboardScreen: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.enc') && !fileName.endsWith('.json')) {
-      alert('Invalid file selected. Please select a valid CrimeGraph .enc or .json package.');
-      e.target.value = ''; 
-      return;
-    }
+    // 🚀 FIXED: Removed the fileName.endsWith check. 
+    // We now rely entirely on the crypto engine to validate the file contents.
 
     const reader = new FileReader();
     reader.onload = async (event) => {
@@ -76,7 +72,6 @@ export const DashboardScreen: React.FC = () => {
           <p className="text-[#7880a0] text-xs mt-1">Select a database to load</p>
         </div>
         <div className="flex space-x-2">
-          {/* 🚀 FIXED: Universal accept parameter forces Google Drive to allow custom extensions */}
           <input type="file" accept="*/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
           <button onClick={handleImportClick} className="bg-[#1c2030] text-[#dde1ec] border border-[#454d66] text-xs font-bold px-3 py-2 rounded shadow-md hover:bg-[#252a3a]">
             IMPORT

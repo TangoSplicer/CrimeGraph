@@ -10,7 +10,10 @@ export interface GraphElement { data: { id: string; label: string; type?: string
 export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; }
 
 interface CaseState {
-  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; selectedNodeId: string | null; connectingFromId: string | null;
+  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; 
+  selectedNodeId: string | null; 
+  selectedEdgeId: string | null; // 🚀 NEW: Track selected relationships
+  connectingFromId: string | null;
   auditLogs: AuditLog[];
   
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
@@ -20,7 +23,10 @@ interface CaseState {
   addNode: (nodeType: string, label: string, confidence: number) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
-  setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
+  deleteEdge: (edgeId: string) => Promise<void>; // 🚀 NEW: Delete just the relationship
+  setSelectedNodeId: (id: string | null) => void; 
+  setSelectedEdgeId: (id: string | null) => void; // 🚀 NEW
+  setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
   
   loadAuditLogs: () => Promise<void>;
@@ -36,7 +42,7 @@ const logAudit = async (action: string, targetId: string, details: string) => {
 };
 
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, connectingFromId: null, auditLogs: [],
+  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, auditLogs: [],
   
   loadCases: async () => {
     try {
@@ -97,7 +103,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     try {
       const db = await getDb();
       await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, label, nodeType, confidence, now]);
-      await logAudit('ADD_NODE', id, `Added ${nodeType}: ${label} (Conf: ${confidence})`);
+      await logAudit('ADD_NODE', id, `Added ${nodeType}: ${label}`);
       set({ graphElements: [...graphElements, { data: { id, label, type: nodeType, confidence, created_at: now } }] });
     } catch (e) { console.error(e); }
   },
@@ -111,7 +117,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     try {
       const db = await getDb();
       await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, sourceId, targetId, relationshipType, now]);
-      await logAudit('ADD_EDGE', id, `Connected ${sourceId} to ${targetId} via ${relationshipType}`);
+      await logAudit('ADD_EDGE', id, `Connected ${sourceId} to ${targetId}`);
       set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: relationshipType, created_at: now } }] });
     } catch (e) { console.error(e); }
   },
@@ -122,13 +128,26 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const db = await getDb();
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
-      await logAudit('DELETE_NODE', nodeId, 'Node and associated edges destroyed');
+      await logAudit('DELETE_NODE', nodeId, 'Node and edges destroyed');
       const remainingElements = graphElements.filter(e => e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId);
-      set({ graphElements: remainingElements, selectedNodeId: null });
+      set({ graphElements: remainingElements, selectedNodeId: null, selectedEdgeId: null });
     } catch (e) { console.error(e); }
   },
 
-  setSelectedNodeId: (id) => set({ selectedNodeId: id }),
+  // 🚀 NEW: Delete Edge Function
+  deleteEdge: async (edgeId) => {
+    const { graphElements } = get();
+    try {
+      const db = await getDb();
+      await db.run('DELETE FROM edges WHERE id = ?', [edgeId]);
+      await logAudit('DELETE_EDGE', edgeId, 'Relationship severed');
+      const remainingElements = graphElements.filter(e => e.data.id !== edgeId);
+      set({ graphElements: remainingElements, selectedEdgeId: null });
+    } catch (e) { console.error(e); }
+  },
+
+  setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
+  setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
   setConnectingFromId: (id) => set({ connectingFromId: id }),
 
   exportActiveCase: async () => {
@@ -212,22 +231,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   wipeDatabase: async () => {
     try {
       const db = await getDb();
-      // 🚀 FIXED: Execute each drop command sequentially so the native bridge doesn't drop them
       await db.run('DELETE FROM edges');
       await db.run('DELETE FROM nodes');
       await db.run('DELETE FROM cases');
-      await db.run('DELETE FROM audit_logs'); // 🚀 FIXED: Scorch the historical ledger
-
-      // Completely clear the UI state
+      await db.run('DELETE FROM audit_logs');
       set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [] });
-      
-      // Inject the single final log proving the wipe occurred
       await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'All operational intelligence and history was permanently destroyed via Kill Switch');
-      
       get().loadAuditLogs();
       get().loadCases();
-    } catch (e) { 
-      console.error('Failed to wipe database', e); 
-    }
+    } catch (e) { console.error('Failed to wipe database', e); }
   }
 }));

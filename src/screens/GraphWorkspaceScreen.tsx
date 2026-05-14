@@ -8,8 +8,11 @@ import { useCaseStore } from '../stores/caseStore';
 export const GraphWorkspaceScreen: React.FC = () => {
   const navigate = useNavigate();
   const { 
-    graphElements, selectedNodeId, setSelectedNodeId, 
-    connectingFromId, setConnectingFromId, deleteNode, 
+    graphElements, 
+    selectedNodeId, setSelectedNodeId, 
+    selectedEdgeId, setSelectedEdgeId, // 🚀 NEW
+    connectingFromId, setConnectingFromId, 
+    deleteNode, deleteEdge, // 🚀 NEW
     activeCaseId, cases, exportActiveCase
   } = useCaseStore();
   
@@ -20,6 +23,12 @@ export const GraphWorkspaceScreen: React.FC = () => {
   }, [activeCaseId, navigate]);
 
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
+  const selectedEdge = graphElements.find(e => e.data.id === selectedEdgeId);
+
+  // Helper to find labels for the edge sheet
+  const getLabelForNode = (id: string) => {
+    return graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
+  };
 
   const handleStartConnection = () => {
     if (selectedNodeId) {
@@ -31,6 +40,12 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const handleDeleteNode = () => {
     if (selectedNodeId && window.confirm('Permanently delete this intelligence node and connections?')) {
       deleteNode(selectedNodeId);
+    }
+  };
+
+  const handleDeleteEdge = () => {
+    if (selectedEdgeId && window.confirm('Sever this relationship link? Both nodes will remain intact.')) {
+      deleteEdge(selectedEdgeId);
     }
   };
 
@@ -46,11 +61,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
           <p className="text-[10px] text-[#7880a0] truncate w-48">{activeCase.title}</p>
         </div>
         <div className="flex items-center space-x-2">
-          {/* 🚀 Phase 8: Export Button */}
-          <button 
-            onClick={exportActiveCase}
-            className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors"
-          >
+          <button onClick={exportActiveCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors">
             EXPORT
           </button>
           <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-[#454d66] text-[#dde1ec] bg-[#252a3a]">
@@ -70,7 +81,14 @@ export const GraphWorkspaceScreen: React.FC = () => {
         <GraphCanvas />
       </div>
 
-      <BottomSheet isOpen={!!selectedNodeId && !connectingFromId} onClose={() => setSelectedNodeId(null)} title={selectedNode?.data.label || 'Node Details'}>
+      {/* 🚀 FIXED: Bottom Sheet now renders dynamic content based on whether a Node OR an Edge is selected */}
+      <BottomSheet 
+        isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} 
+        onClose={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }} 
+        title={selectedNode ? selectedNode.data.label : 'Relationship Details'}
+      >
+        
+        {/* VIEW 1: Node Details */}
         {selectedNode && (
           <div className="space-y-6">
             <div className="flex justify-between items-center border-b border-[#252a3a] pb-4">
@@ -82,11 +100,32 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
             <div className="grid grid-cols-2 gap-4 pt-4">
-              <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded">Draw Connection</button>
-              <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded">Delete Node</button>
+              <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded hover:bg-[#4a8be5]">Draw Connection</button>
+              <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded hover:bg-[#c0392b] hover:text-white">Delete Node</button>
             </div>
           </div>
         )}
+
+        {/* VIEW 2: Edge Details */}
+        {selectedEdge && selectedEdge.data.source && selectedEdge.data.target && (
+          <div className="space-y-6">
+            <div className="bg-[#1c2030] border border-[#252a3a] rounded p-4 flex flex-col items-center space-y-3">
+              <span className="text-[#dde1ec] font-mono text-xs">{getLabelForNode(selectedEdge.data.source)}</span>
+              <div className="flex flex-col items-center text-[#e74c3c]">
+                <span className="text-[10px] font-bold uppercase mb-1">{selectedEdge.data.label}</span>
+                <span>↓</span>
+              </div>
+              <span className="text-[#dde1ec] font-mono text-xs">{getLabelForNode(selectedEdge.data.target)}</span>
+            </div>
+            
+            <div className="pt-4">
+              <button onClick={handleDeleteEdge} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded hover:bg-[#a93226]">
+                Sever Connection
+              </button>
+            </div>
+          </div>
+        )}
+
       </BottomSheet>
       <BottomTabBar />
     </div>

@@ -27,6 +27,10 @@ export const GraphCanvas: React.FC = () => {
           'width': 2, 'line-color': '#454d66', 'target-arrow-color': '#454d66', 'target-arrow-shape': 'triangle',
           'curve-style': 'bezier', 'label': 'data(label)', 'color': '#7880a0', 'font-size': '8px',
           'text-background-opacity': 1, 'text-background-color': '#0c0e14', 'text-background-padding': 2
+      }},
+      // 🚀 NEW: Edge Selection Styling (Glows Red when tapped)
+      { selector: 'edge:selected', style: {
+          'width': 4, 'line-color': '#e74c3c', 'target-arrow-color': '#e74c3c', 'color': '#e74c3c'
       }}
     ];
 
@@ -43,7 +47,12 @@ export const GraphCanvas: React.FC = () => {
       const target = evt.target;
       const state = useCaseStore.getState();
       
-      if (target === cy) { state.setSelectedNodeId(null); return; }
+      if (target === cy) { 
+        state.setSelectedNodeId(null); 
+        state.setSelectedEdgeId(null);
+        return; 
+      }
+      
       if (target.isNode()) {
         const targetId = target.id();
         if (state.connectingFromId) {
@@ -53,18 +62,20 @@ export const GraphCanvas: React.FC = () => {
           state.setSelectedNodeId(targetId);
         }
       }
+
+      // 🚀 NEW: Handle Edge Selection
+      if (target.isEdge() && !state.connectingFromId) {
+        state.setSelectedEdgeId(target.id());
+      }
     });
 
     return () => cy.destroy();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🚀 FIXED: The reactivity engine now handles both additions AND deletions
   useEffect(() => {
     if (!cyRef.current) return;
     const cy = cyRef.current;
     
-    // 1. Add new elements
     const currentIds = new Set();
     cy.elements().forEach((ele: any) => { currentIds.add(ele.id()); });
     const newElements = graphElements.filter(e => !currentIds.has(e.data.id));
@@ -74,7 +85,6 @@ export const GraphCanvas: React.FC = () => {
       cy.layout({ name: 'cose', padding: 50, animate: true, animationDuration: 300, randomize: false }).run();
     }
 
-    // 2. Remove deleted elements
     const stateIds = new Set(graphElements.map(e => e.data.id));
     const elementsToRemove = cy.elements().filter((ele: any) => !stateIds.has(ele.id()));
     

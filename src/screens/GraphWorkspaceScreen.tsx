@@ -106,6 +106,19 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
+            <div className="space-y-2 border-t border-[#252a3a] pt-4 mb-4">
+              <h4 className="text-[10px] text-[#3a7bd5] uppercase font-bold tracking-widest mb-3">Entity Metadata</h4>
+              {selectedNode.data.attributes && Object.keys(selectedNode.data.attributes).length > 0 ? (
+                Object.entries(selectedNode.data.attributes).map(([key, val]) => (
+                  <div key={key} className="flex justify-between items-start">
+                    <span className="text-xs text-[#7880a0] capitalize">{key.replace("_", " ")}</span>
+                    <span className="text-xs font-mono text-[#dde1ec] text-right ml-4 break-words max-w-[60%]">{val as string}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-[#7880a0] italic">No metadata recorded.</p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-4 pt-4 pb-4">
               <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded hover:bg-[#4a8be5]">Draw Connection</button>
               <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded hover:bg-[#c0392b] hover:text-white">Delete Node</button>

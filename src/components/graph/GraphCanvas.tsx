@@ -24,7 +24,7 @@ export const GraphCanvas: React.FC = () => {
       }},
       { selector: 'node:selected', style: { 'border-width': 4, 'border-color': '#ffffff', 'shadow-blur': 15, 'shadow-color': '#ffffff' }},
       { selector: 'edge', style: {
-          'width': 2, 'line-color': '#454d66', 'target-arrow-color': '#454d66', 'target-arrow-shape': 'triangle',
+          'width': 3, 'line-color': '#454d66', 'target-arrow-color': '#454d66', 'target-arrow-shape': 'triangle',
           'curve-style': 'bezier', 'label': 'data(label)', 'color': '#7880a0', 'font-size': '8px',
           'text-background-opacity': 1, 'text-background-color': '#0c0e14', 'text-background-padding': 2
       }},
@@ -38,7 +38,7 @@ export const GraphCanvas: React.FC = () => {
       container: containerRef.current, elements: graphElements, style: style,
       layout: { name: 'cose', padding: 50, animate: false },
       userZoomingEnabled: true, userPanningEnabled: true, boxSelectionEnabled: false,
-      minZoom: 0.1, maxZoom: 4, touchTapThreshold: 8,
+      minZoom: 0.1, maxZoom: 4, touchTapThreshold: 40,
     });
     
     cyRef.current = cy;

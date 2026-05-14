@@ -7,9 +7,12 @@ import { encryptPackage, decryptPackage } from '../capacitor/crypto';
 
 export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; node_count?: number; }
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; }; }
+export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; }
 
 interface CaseState {
   cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; selectedNodeId: string | null; connectingFromId: string | null;
+  auditLogs: AuditLog[]; // 🚀 NEW: Audit Logs State
+  
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
   archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
@@ -19,6 +22,10 @@ interface CaseState {
   deleteNode: (nodeId: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
+  
+  // 🚀 NEW: Admin Functions
+  loadAuditLogs: () => Promise<void>;
+  wipeDatabase: () => Promise<void>;
 }
 
 const logAudit = async (action: string, targetId: string, details: string) => {
@@ -30,7 +37,7 @@ const logAudit = async (action: string, targetId: string, details: string) => {
 };
 
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, connectingFromId: null,
+  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, connectingFromId: null, auditLogs: [],
   
   loadCases: async () => {
     try {
@@ -50,11 +57,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, refNumber, title, caseType, 'active', classification, now, now, now]);
       await logAudit('CREATE_CASE', id, `Created ${refNumber}: ${title}`);
       get().loadCases();
-    } catch (e) { 
-      console.error('Database rejection:', e); 
-      // 🚀 FIXED: Throw the error so the UI knows the SQLite constraints failed
-      throw e;
-    }
+    } catch (e) { throw e; }
   },
 
   archiveCase: async (caseId) => {
@@ -197,5 +200,29 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       alert('Decryption failed. Incorrect password or corrupted file.');
       throw e;
     }
+  },
+
+  // 🚀 PHASE 11: Admin Functions
+  loadAuditLogs: async () => {
+    try {
+      const db = await getDb();
+      // Fetch the latest 100 logs
+      const res = await db.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100');
+      set({ auditLogs: res.values || [] });
+    } catch (e) { console.error('Failed to load audit logs', e); }
+  },
+
+  wipeDatabase: async () => {
+    try {
+      const db = await getDb();
+      // Scorch the earth
+      await db.execute('DELETE FROM edges; DELETE FROM nodes; DELETE FROM cases;');
+      set({ cases: [], graphElements: [], activeCaseId: null });
+      
+      // We don't wipe the users table, and we append a final log to state the device was wiped
+      await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'All operational intelligence was permanently destroyed via Kill Switch');
+      get().loadAuditLogs();
+      get().loadCases();
+    } catch (e) { console.error('Failed to wipe database', e); }
   }
 }));

@@ -10,9 +10,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const { 
     graphElements, 
     selectedNodeId, setSelectedNodeId, 
-    selectedEdgeId, setSelectedEdgeId, // 🚀 NEW
+    selectedEdgeId, setSelectedEdgeId,
     connectingFromId, setConnectingFromId, 
-    deleteNode, deleteEdge, // 🚀 NEW
+    deleteNode, deleteEdge,
     activeCaseId, cases, exportActiveCase
   } = useCaseStore();
   
@@ -25,7 +25,6 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
   const selectedEdge = graphElements.find(e => e.data.id === selectedEdgeId);
 
-  // Helper to find labels for the edge sheet
   const getLabelForNode = (id: string) => {
     return graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
   };
@@ -81,14 +80,21 @@ export const GraphWorkspaceScreen: React.FC = () => {
         <GraphCanvas />
       </div>
 
-      {/* 🚀 FIXED: Bottom Sheet now renders dynamic content based on whether a Node OR an Edge is selected */}
+      {/* 🚀 FIXED: The Floating Action Button (FAB) is back! */}
+      {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
+        <button 
+          onClick={() => navigate('/add')}
+          className="absolute bottom-20 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_15px_rgba(58,123,213,0.4)] z-30 hover:bg-[#4a8be5] transition-colors"
+        >
+          +
+        </button>
+      )}
+
       <BottomSheet 
         isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} 
         onClose={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }} 
         title={selectedNode ? selectedNode.data.label : 'Relationship Details'}
       >
-        
-        {/* VIEW 1: Node Details */}
         {selectedNode && (
           <div className="space-y-6">
             <div className="flex justify-between items-center border-b border-[#252a3a] pb-4">
@@ -99,14 +105,14 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
-            <div className="grid grid-cols-2 gap-4 pt-4">
+            {/* 🚀 FIXED: Added padding bottom to ensure buttons clear the mobile safe area */}
+            <div className="grid grid-cols-2 gap-4 pt-4 pb-4">
               <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded hover:bg-[#4a8be5]">Draw Connection</button>
               <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded hover:bg-[#c0392b] hover:text-white">Delete Node</button>
             </div>
           </div>
         )}
 
-        {/* VIEW 2: Edge Details */}
         {selectedEdge && selectedEdge.data.source && selectedEdge.data.target && (
           <div className="space-y-6">
             <div className="bg-[#1c2030] border border-[#252a3a] rounded p-4 flex flex-col items-center space-y-3">
@@ -118,14 +124,13 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#dde1ec] font-mono text-xs">{getLabelForNode(selectedEdge.data.target)}</span>
             </div>
             
-            <div className="pt-4">
+            <div className="pt-4 pb-4">
               <button onClick={handleDeleteEdge} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded hover:bg-[#a93226]">
                 Sever Connection
               </button>
             </div>
           </div>
         )}
-
       </BottomSheet>
       <BottomTabBar />
     </div>

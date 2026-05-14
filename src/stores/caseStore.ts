@@ -11,7 +11,7 @@ export interface AuditLog { id: string; timestamp: string; user_id: string; acti
 
 interface CaseState {
   cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; selectedNodeId: string | null; connectingFromId: string | null;
-  auditLogs: AuditLog[]; // 🚀 NEW: Audit Logs State
+  auditLogs: AuditLog[];
   
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
@@ -23,7 +23,6 @@ interface CaseState {
   setSelectedNodeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
   
-  // 🚀 NEW: Admin Functions
   loadAuditLogs: () => Promise<void>;
   wipeDatabase: () => Promise<void>;
 }
@@ -202,11 +201,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     }
   },
 
-  // 🚀 PHASE 11: Admin Functions
   loadAuditLogs: async () => {
     try {
       const db = await getDb();
-      // Fetch the latest 100 logs
       const res = await db.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100');
       set({ auditLogs: res.values || [] });
     } catch (e) { console.error('Failed to load audit logs', e); }
@@ -215,14 +212,22 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   wipeDatabase: async () => {
     try {
       const db = await getDb();
-      // Scorch the earth
-      await db.execute('DELETE FROM edges; DELETE FROM nodes; DELETE FROM cases;');
-      set({ cases: [], graphElements: [], activeCaseId: null });
+      // 🚀 FIXED: Execute each drop command sequentially so the native bridge doesn't drop them
+      await db.run('DELETE FROM edges');
+      await db.run('DELETE FROM nodes');
+      await db.run('DELETE FROM cases');
+      await db.run('DELETE FROM audit_logs'); // 🚀 FIXED: Scorch the historical ledger
+
+      // Completely clear the UI state
+      set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [] });
       
-      // We don't wipe the users table, and we append a final log to state the device was wiped
-      await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'All operational intelligence was permanently destroyed via Kill Switch');
+      // Inject the single final log proving the wipe occurred
+      await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'All operational intelligence and history was permanently destroyed via Kill Switch');
+      
       get().loadAuditLogs();
       get().loadCases();
-    } catch (e) { console.error('Failed to wipe database', e); }
+    } catch (e) { 
+      console.error('Failed to wipe database', e); 
+    }
   }
 }));

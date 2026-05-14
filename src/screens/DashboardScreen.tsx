@@ -30,7 +30,6 @@ export const DashboardScreen: React.FC = () => {
   };
 
   const handleImportClick = () => {
-    // 🚀 FIXED: Tell the security engine we are intentionally leaving the app for a moment
     setIntentionalBackground(true);
     fileInputRef.current?.click();
   };
@@ -38,6 +37,15 @@ export const DashboardScreen: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // 🚀 FIXED: We validate the file extension here instead of relying on the OS
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.enc') && !fileName.endsWith('.json')) {
+      alert('Invalid file selected. Please select a valid CrimeGraph .enc or .json package.');
+      e.target.value = ''; // Reset
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -45,7 +53,7 @@ export const DashboardScreen: React.FC = () => {
         await importCase(content);
         alert('Intelligence package imported successfully!');
       } catch(err) {
-        alert('Failed to import file. Ensure it is a valid CrimeGraph JSON package.');
+        alert('Failed to import file. Ensure it is a valid encrypted CrimeGraph package and the password is correct.');
       }
     };
     reader.readAsText(file);
@@ -69,7 +77,8 @@ export const DashboardScreen: React.FC = () => {
           <p className="text-[#7880a0] text-xs mt-1">Select a database to load</p>
         </div>
         <div className="flex space-x-2">
-          <input type="file" accept=".enc,.json" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+          {/* 🚀 FIXED: accept="*/*" forces Google Drive to allow selection of unknown custom extensions */}
+          <input type="file" accept="*/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
           <button onClick={handleImportClick} className="bg-[#1c2030] text-[#dde1ec] border border-[#454d66] text-xs font-bold px-3 py-2 rounded shadow-md hover:bg-[#252a3a]">
             IMPORT
           </button>

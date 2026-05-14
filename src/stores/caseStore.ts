@@ -53,7 +53,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     } catch (e) { 
       console.error('Database rejection:', e); 
       // 🚀 FIXED: Throw the error so the UI knows the SQLite constraints failed
-      throw new Error('Database rejected creation. Check uniqueness.');
+      throw e;
     }
   },
 

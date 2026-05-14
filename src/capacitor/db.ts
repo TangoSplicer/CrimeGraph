@@ -20,9 +20,6 @@ export async function initDatabase() {
     }
     await db.open();
 
-    // 🚀 PHASE 10: Enable Forensic Wiping
-    await db.execute('PRAGMA secure_delete = ON;');
-
     const createTables = `
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, display_name TEXT NOT NULL, force_unit TEXT, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, is_active INTEGER DEFAULT 1);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -31,6 +28,14 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT);
     `;
     await db.execute(createTables);
+    
+    // Safely execute PRAGMA using run instead of execute to prevent initialization crashes
+    try {
+       await db.run('PRAGMA secure_delete = ON;');
+    } catch (pragmaError) {
+       console.warn('Forensic wiping PRAGMA not supported on this architecture, bypassing.');
+    }
+
     dbInstance = db;
     return db;
   } catch (error) {

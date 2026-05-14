@@ -18,9 +18,10 @@ export const CreateCaseScreen: React.FC = () => {
     try {
       await addCase(title.trim(), refNumber.trim().toUpperCase(), caseType, classification);
       navigate('/');
-    } catch (error) {
-      // 🚀 FIXED: Alert the user instead of failing silently
-      alert("Failed to create Operation. The URN/Reference Number must be completely unique. Please ensure this reference isn't already used in your Active or Archived tabs.");
+    } catch (error: any) {
+      // 🚀 FIXED: We now show the actual raw database error so we know exactly what went wrong.
+      const errorMessage = error?.message || JSON.stringify(error) || "Unknown SQLite Error";
+      alert(`CRITICAL ERROR:\n\n${errorMessage}\n\nPlease check your inputs or application state.`);
     }
   };
 

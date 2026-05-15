@@ -10,7 +10,7 @@ const nodeColors: Record<string, string> = {
 export const GraphCanvas: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
-  const { graphElements } = useCaseStore();
+  const { graphElements, hiddenNodeTypes } = useCaseStore();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -28,10 +28,11 @@ export const GraphCanvas: React.FC = () => {
           'curve-style': 'bezier', 'label': 'data(label)', 'color': '#7880a0', 'font-size': '8px',
           'text-background-opacity': 1, 'text-background-color': '#0c0e14', 'text-background-padding': 2
       }},
-      // 🚀 NEW: Edge Selection Styling (Glows Red when tapped)
       { selector: 'edge:selected', style: {
           'width': 4, 'line-color': '#e74c3c', 'target-arrow-color': '#e74c3c', 'color': '#e74c3c'
-      }}
+      }},
+      // 🚀 NEW: The invisible class
+      { selector: '.filtered-out', style: { 'display': 'none' } }
     ];
 
     const cy = cytoscape({
@@ -63,7 +64,6 @@ export const GraphCanvas: React.FC = () => {
         }
       }
 
-      // 🚀 NEW: Handle Edge Selection
       if (target.isEdge() && !state.connectingFromId) {
         state.setSelectedEdgeId(target.id());
       }
@@ -91,7 +91,19 @@ export const GraphCanvas: React.FC = () => {
     if (elementsToRemove.length > 0) {
       cy.remove(elementsToRemove);
     }
-  }, [graphElements]);
+    
+    // 🚀 NEW: Apply filtering dynamically based on the global state
+    cy.batch(() => {
+      cy.nodes().removeClass('filtered-out');
+      const hiddenTypes = useCaseStore.getState().hiddenNodeTypes;
+      if (hiddenTypes.length > 0) {
+        hiddenTypes.forEach(type => {
+          cy.nodes(`[type = "${type}"]`).addClass('filtered-out');
+        });
+      }
+    });
+    
+  }, [graphElements, hiddenNodeTypes]);
 
   return <div ref={containerRef} className="w-full h-full bg-[#0c0e14]" />;
 };

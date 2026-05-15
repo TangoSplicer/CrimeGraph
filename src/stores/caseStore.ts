@@ -10,7 +10,10 @@ export interface GraphElement { data: { id: string; label: string; type?: string
 export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; }
 
 interface CaseState {
-  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; selectedNodeId: string | null; selectedEdgeId: string | null; connectingFromId: string | null; auditLogs: AuditLog[];
+  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; 
+  selectedNodeId: string | null; selectedEdgeId: string | null; connectingFromId: string | null; auditLogs: AuditLog[];
+  hiddenNodeTypes: string[]; // 🚀 NEW: Tracks which entity types are currently hidden
+
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
   archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
@@ -21,6 +24,7 @@ interface CaseState {
   setSelectedNodeId: (id: string | null) => void; setSelectedEdgeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
   loadAuditLogs: () => Promise<void>; wipeDatabase: () => Promise<void>;
+  toggleFilter: (nodeType: string) => void; // 🚀 NEW: Toggles visibility
 }
 
 const logAudit = async (action: string, targetId: string, details: string) => {
@@ -32,7 +36,7 @@ const logAudit = async (action: string, targetId: string, details: string) => {
 };
 
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, auditLogs: [],
+  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, auditLogs: [], hiddenNodeTypes: [],
   
   loadCases: async () => {
     try {
@@ -42,7 +46,10 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     } catch (e) {}
   },
 
-  setActiveCase: (id) => { set({ activeCaseId: id }); get().loadGraphElements(id); },
+  setActiveCase: (id) => { 
+    set({ activeCaseId: id, hiddenNodeTypes: [] }); // Reset filters on load
+    get().loadGraphElements(id); 
+  },
 
   addCase: async (title, refNumber, caseType, classification) => {
     const id = `case_${Date.now()}`;
@@ -153,7 +160,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     if (!activeCase) return;
 
     const password = window.prompt("SECURE EXPORT: Enter a strong password to encrypt this intelligence package:");
-    if (!password) { alert("Export cancelled. A password is required."); return; }
+    if (!password) { alert("Export cancelled."); return; }
 
     await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported Encrypted intelligence package');
 
@@ -171,14 +178,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       useAuthStore.getState().setIntentionalBackground(true);
       const canShare = await Share.canShare();
       if (canShare.value) {
-        await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Encrypted Intelligence Data for ${activeCase.title}`, url: fileResult.uri, dialogTitle: 'Export Secure Package' });
-      } else { alert("Device does not support native sharing."); }
-    } catch (error) { console.error('Export failed:', error); alert('Failed to encrypt and export case data.'); }
+        await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Data`, url: fileResult.uri, dialogTitle: 'Export Secure Package' });
+      }
+    } catch (error) { alert('Failed to export.'); }
   },
 
   importCase: async (encryptedData: string) => {
-    const password = window.prompt("SECURE IMPORT: Enter the decryption password for this package:");
-    if (!password) { alert("Import cancelled. Password required."); return; }
+    const password = window.prompt("SECURE IMPORT: Enter the decryption password:");
+    if (!password) { alert("Import cancelled."); return; }
 
     try {
       const jsonStr = await decryptPackage(encryptedData, password);
@@ -197,10 +204,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       for (const node of data.intelligence_nodes) {
         const newNodeId = `node_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
         idMap.set(node.data.id, newNodeId);
-        
-        // 🚀 Ensure metadata attributes survive the import process
         const attrString = node.data.attributes ? JSON.stringify(node.data.attributes) : '{}';
-        
         await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)', [newNodeId, newCaseId, node.data.label, node.data.type, node.data.confidence, node.data.created_at || now, attrString]);
       }
       for (const edge of data.relationships) {
@@ -212,12 +216,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         }
       }
       get().loadCases();
-      await logAudit('IMPORT_CASE', newCaseId, `Imported decrypted package: ${title}`);
-    } catch (e) {
-      console.error('Import failed', e);
-      alert('Decryption failed. Incorrect password or corrupted file.');
-      throw e;
-    }
+      await logAudit('IMPORT_CASE', newCaseId, `Imported: ${title}`);
+    } catch (e) { alert('Decryption failed.'); throw e; }
   },
 
   loadAuditLogs: async () => {
@@ -225,20 +225,25 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const db = await getDb();
       const res = await db.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 100');
       set({ auditLogs: res.values || [] });
-    } catch (e) { console.error('Failed to load audit logs', e); }
+    } catch (e) {}
   },
 
   wipeDatabase: async () => {
     try {
       const db = await getDb();
-      await db.run('DELETE FROM edges');
-      await db.run('DELETE FROM nodes');
-      await db.run('DELETE FROM cases');
-      await db.run('DELETE FROM audit_logs');
+      await db.run('DELETE FROM edges'); await db.run('DELETE FROM nodes'); await db.run('DELETE FROM cases'); await db.run('DELETE FROM audit_logs');
       set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [] });
-      await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'All operational intelligence and history was permanently destroyed via Kill Switch');
-      get().loadAuditLogs();
-      get().loadCases();
-    } catch (e) { console.error('Failed to wipe database', e); }
+      await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'Wiped via Kill Switch');
+      get().loadAuditLogs(); get().loadCases();
+    } catch (e) {}
+  },
+
+  // 🚀 NEW: Filter logic
+  toggleFilter: (nodeType: string) => {
+    set(state => ({
+      hiddenNodeTypes: state.hiddenNodeTypes.includes(nodeType)
+        ? state.hiddenNodeTypes.filter(t => t !== nodeType)
+        : [...state.hiddenNodeTypes, nodeType]
+    }));
   }
 }));

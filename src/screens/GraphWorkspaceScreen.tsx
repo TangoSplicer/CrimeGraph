@@ -1,21 +1,22 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GraphCanvas } from '../components/graph/GraphCanvas';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { BottomSheet } from '../components/shared/BottomSheet';
 import { useCaseStore } from '../stores/caseStore';
 
+const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
+
 export const GraphWorkspaceScreen: React.FC = () => {
   const navigate = useNavigate();
   const { 
-    graphElements, 
-    selectedNodeId, setSelectedNodeId, 
-    selectedEdgeId, setSelectedEdgeId,
-    connectingFromId, setConnectingFromId, 
-    deleteNode, deleteEdge,
-    activeCaseId, cases, exportActiveCase
+    graphElements, selectedNodeId, setSelectedNodeId, selectedEdgeId, setSelectedEdgeId,
+    connectingFromId, setConnectingFromId, deleteNode, deleteEdge,
+    activeCaseId, cases, exportActiveCase, hiddenNodeTypes, toggleFilter // 🚀 NEW
   } = useCaseStore();
   
+  const [isFilterOpen, setIsFilterOpen] = useState(false); // 🚀 NEW
+
   const activeCase = cases.find(c => c.id === activeCaseId);
 
   useEffect(() => {
@@ -25,27 +26,18 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
   const selectedEdge = graphElements.find(e => e.data.id === selectedEdgeId);
 
-  const getLabelForNode = (id: string) => {
-    return graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
-  };
+  const getLabelForNode = (id: string) => graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
 
   const handleStartConnection = () => {
-    if (selectedNodeId) {
-      setConnectingFromId(selectedNodeId);
-      setSelectedNodeId(null);
-    }
+    if (selectedNodeId) { setConnectingFromId(selectedNodeId); setSelectedNodeId(null); }
   };
 
   const handleDeleteNode = () => {
-    if (selectedNodeId && window.confirm('Permanently delete this intelligence node and connections?')) {
-      deleteNode(selectedNodeId);
-    }
+    if (selectedNodeId && window.confirm('Permanently delete this intelligence node and connections?')) deleteNode(selectedNodeId);
   };
 
   const handleDeleteEdge = () => {
-    if (selectedEdgeId && window.confirm('Sever this relationship link? Both nodes will remain intact.')) {
-      deleteEdge(selectedEdgeId);
-    }
+    if (selectedEdgeId && window.confirm('Sever this relationship link?')) deleteEdge(selectedEdgeId);
   };
 
   const renderStars = (rating: number = 3) => '★'.repeat(rating) + '☆'.repeat(5 - rating);
@@ -54,33 +46,56 @@ export const GraphWorkspaceScreen: React.FC = () => {
 
   return (
     <div className="flex flex-col w-full h-full bg-[#0c0e14] relative">
-      <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe z-10 flex justify-between items-center shadow-md">
+      <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe z-20 flex justify-between items-center shadow-md">
         <div>
           <h2 className="text-sm font-mono text-[#3a7bd5]">{activeCase.reference_number}</h2>
           <p className="text-[10px] text-[#7880a0] truncate w-48">{activeCase.title}</p>
         </div>
         <div className="flex items-center space-x-2">
+          {/* 🚀 NEW: Filter Button */}
+          <button 
+            onClick={() => setIsFilterOpen(!isFilterOpen)} 
+            className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${
+              hiddenNodeTypes.length > 0 ? 'bg-[#e74c3c] text-white border-[#e74c3c]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'
+            }`}
+          >
+            FILTERS {hiddenNodeTypes.length > 0 && `(${hiddenNodeTypes.length})`}
+          </button>
           <button onClick={exportActiveCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors">
             EXPORT
           </button>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-[#454d66] text-[#dde1ec] bg-[#252a3a]">
-            {activeCase.classification}
-          </span>
         </div>
       </div>
 
+      {/* 🚀 NEW: Filter Dropdown Menu */}
+      {isFilterOpen && (
+        <div className="absolute top-[60px] right-4 z-30 bg-[#1c2030] border border-[#252a3a] rounded-lg shadow-xl w-48 p-3 mt-safe">
+          <h3 className="text-[10px] font-bold text-[#7880a0] uppercase tracking-widest mb-2 border-b border-[#252a3a] pb-1">Hide Entities</h3>
+          <div className="space-y-2">
+            {entityTypes.map(type => (
+              <label key={type} className="flex items-center space-x-2 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={hiddenNodeTypes.includes(type)}
+                  onChange={() => toggleFilter(type)}
+                  className="rounded bg-[#0c0e14] border-[#454d66] text-[#e74c3c] focus:ring-[#e74c3c]"
+                />
+                <span className="text-xs text-[#dde1ec] capitalize">{type.replace('_', ' ')}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {connectingFromId && (
-        <div className="absolute top-[70px] left-4 right-4 z-20 bg-[#3a7bd5] text-white p-3 rounded shadow-lg flex justify-between items-center">
+        <div className="absolute top-[70px] left-4 right-4 z-20 bg-[#3a7bd5] text-white p-3 rounded shadow-lg flex justify-between items-center mt-safe">
           <span className="text-xs font-bold uppercase tracking-wide animate-pulse">Tap target node...</span>
           <button onClick={() => setConnectingFromId(null)} className="text-white border border-white/30 px-3 py-1 rounded text-xs">Cancel</button>
         </div>
       )}
 
-      {/* 🚀 FIXED: Map Container */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative overflow-hidden" onClick={() => setIsFilterOpen(false)}>
         <GraphCanvas />
-        
-        {/* 🚀 FIXED: The FAB is now explicitly INSIDE the relative map container, anchored 24px from the bottom right with a massive z-index */}
         {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
           <button 
             onClick={() => navigate('/add')}
@@ -91,11 +106,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
         )}
       </div>
 
-      <BottomSheet 
-        isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} 
-        onClose={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }} 
-        title={selectedNode ? selectedNode.data.label : 'Relationship Details'}
-      >
+      <BottomSheet isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} onClose={() => { setSelectedNodeId(null); setSelectedEdgeId(null); }} title={selectedNode ? selectedNode.data.label : 'Relationship Details'}>
         {selectedNode && (
           <div className="space-y-6">
             <div className="flex justify-between items-center border-b border-[#252a3a] pb-4">
@@ -106,6 +117,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
+            
             <div className="space-y-2 border-t border-[#252a3a] pt-4 mb-4">
               <h4 className="text-[10px] text-[#3a7bd5] uppercase font-bold tracking-widest mb-3">Entity Metadata</h4>
               {selectedNode.data.attributes && Object.keys(selectedNode.data.attributes).length > 0 ? (
@@ -119,6 +131,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
                 <p className="text-xs text-[#7880a0] italic">No metadata recorded.</p>
               )}
             </div>
+
             <div className="grid grid-cols-2 gap-4 pt-4 pb-4">
               <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white font-bold rounded hover:bg-[#4a8be5]">Draw Connection</button>
               <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] font-bold rounded hover:bg-[#c0392b] hover:text-white">Delete Node</button>
@@ -136,11 +149,8 @@ export const GraphWorkspaceScreen: React.FC = () => {
               </div>
               <span className="text-[#dde1ec] font-mono text-xs">{getLabelForNode(selectedEdge.data.target)}</span>
             </div>
-            
             <div className="pt-4 pb-4">
-              <button onClick={handleDeleteEdge} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded hover:bg-[#a93226]">
-                Sever Connection
-              </button>
+              <button onClick={handleDeleteEdge} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded hover:bg-[#a93226]">Sever Connection</button>
             </div>
           </div>
         )}

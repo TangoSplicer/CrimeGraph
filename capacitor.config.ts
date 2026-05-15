@@ -1,25 +1,22 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'uk.police.crimegraph',
+  appId: 'com.crimegraph.app',
   appName: 'CrimeGraph',
   webDir: 'dist',
-  server: {
-    androidScheme: 'https'
-  },
+  bundledWebRuntime: false,
   plugins: {
     SplashScreen: {
-      launchShowDuration: 0
+      launchShowDuration: 2000,
+      launchAutoHide: true,
+      backgroundColor: "#0c0e14",
+      androidSplashResourceName: "splash",
+      androidScaleType: "CENTER_CROP",
+      showSpinner: false,
+      splashFullScreen: true,
+      splashImmersive: true,
     },
-    StatusBar: {
-      style: 'DARK',
-      backgroundColor: '#0c0e14'
-    },
-    Keyboard: {
-      resize: 'body',
-      style: 'DARK'
-    }
-  }
+  },
 };
 
 export default config;

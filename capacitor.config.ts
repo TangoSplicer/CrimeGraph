@@ -4,7 +4,6 @@ const config: CapacitorConfig = {
   appId: 'com.crimegraph.app',
   appName: 'CrimeGraph',
   webDir: 'dist',
-  bundledWebRuntime: false,
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,

@@ -33,7 +33,7 @@ jobs:
     - name: Generate Capacitor Android Project
       # 🚀 THE ELITE FIX: Explicitly append @6 to force npx's hand
       run: |
-        npx @capacitor/cli@6 add android
+        npx @capacitor/cli@6 sync android
         npx @capacitor/cli@6 sync android
 
     - name: Build Android APK

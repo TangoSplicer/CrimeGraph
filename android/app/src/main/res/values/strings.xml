@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CrimeGraph</string>
+    <string name="title_activity_main">CrimeGraph</string>
+    <string name="package_name">com.crimegraph.app</string>
+    <string name="custom_url_scheme">com.crimegraph.app</string>
+</resources>

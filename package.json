@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc "build": "tsc && vite build","build": "tsc && vite build", vite build",
+    "build": "tsc && vite build",
     "generate-assets": "capacitor-assets generate",
     "sync": "cap sync"
   },

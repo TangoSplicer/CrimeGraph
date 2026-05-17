@@ -1,51 +1,96 @@
 import { create } from 'zustand';
+import { getDb } from '../capacitor/db';
 
-interface User {
-  id: string;
-  username: string;
-  role: string;
-  display_name: string;
-}
+export interface User { id: string; badge: string; name: string; role: 'admin' | 'analyst'; }
 
 interface AuthState {
-  isLocked: boolean;
   currentUser: User | null;
-  currentSessionId: string | null;
-  lastActivityAt: number;
-  lockTimeoutMs: number;
-  authMethod: 'password' | 'biometric' | null;
-  isIntentionalBackground: boolean; // 🚀 NEW: Prevents locking during native UI prompts
-  
-  unlock: (method: 'password' | 'biometric', user: User, sessionId: string) => void;
-  lock: () => void;
-  recordActivity: () => void;
-  setIntentionalBackground: (isIntentional: boolean) => void;
+  isFirstBoot: boolean;
+  isAppReady: boolean;
+  initializeAuth: () => Promise<void>;
+  setupMasterAdmin: (password: string) => Promise<void>;
+  login: (badge: string, pin: string) => Promise<boolean>;
+  adminLogin: (password: string) => Promise<boolean>;
+  logout: () => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  isLocked: true,
+// Secure SHA-256 Hashing for offline PINs/Passwords
+const hashSecret = async (secret: string) => {
+  const msgBuffer = new TextEncoder().encode(secret);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   currentUser: null,
-  currentSessionId: null,
-  lastActivityAt: Date.now(),
-  lockTimeoutMs: 5 * 60 * 1000, // 5 minutes
-  authMethod: null,
-  isIntentionalBackground: false,
+  isFirstBoot: true,
+  isAppReady: false,
 
-  unlock: (method, user, sessionId) => set({
-    isLocked: false,
-    authMethod: method,
-    currentUser: user,
-    currentSessionId: sessionId,
-    lastActivityAt: Date.now()
-  }),
-  
-  lock: () => set({
-    isLocked: true,
-    authMethod: null,
-    // We intentionally keep currentUser to allow biometric unlock
-  }),
-  
-  recordActivity: () => set({ lastActivityAt: Date.now() }),
+  initializeAuth: async () => {
+    try {
+      const db = await getDb();
+      await db.run('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE, name TEXT, hash TEXT, role TEXT, created_at TEXT)');
+      
+      const res = await db.query('SELECT COUNT(*) as count FROM users');
+      const count = res.values?.[0]?.count || 0;
+      
+      if (count === 0) {
+        set({ isFirstBoot: true, isAppReady: true });
+      } else {
+        set({ isFirstBoot: false, isAppReady: true });
+      }
+    } catch (e) { console.error("Auth DB Init Error", e); }
+  },
 
-  setIntentionalBackground: (isIntentional) => set({ isIntentionalBackground: isIntentional })
+  setupMasterAdmin: async (password: string) => {
+    try {
+      const db = await getDb();
+      const hash = await hashSecret(password);
+      const now = new Date().toISOString();
+      
+      // 1. Create Master Admin
+      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', 
+        ['admin_001', 'ADMIN', 'Master Admin', hash, 'admin', now]);
+      
+      // 2. Inject the deliberate Test Case
+      const testHash = await hashSecret('123456');
+      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', 
+        ['test_001', 'TEST-99', 'Test Analyst', testHash, 'analyst', now]);
+
+      set({ isFirstBoot: false });
+    } catch (e) { throw e; }
+  },
+
+  login: async (badge: string, pin: string) => {
+    try {
+      const db = await getDb();
+      const inputHash = await hashSecret(pin);
+      const res = await db.query('SELECT * FROM users WHERE badge = ? AND hash = ? AND role = ?', [badge.toUpperCase(), inputHash, 'analyst']);
+      
+      if (res.values && res.values.length > 0) {
+        const user = res.values[0];
+        set({ currentUser: { id: user.id, badge: user.badge, name: user.name, role: user.role } });
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  },
+
+  adminLogin: async (password: string) => {
+    try {
+      const db = await getDb();
+      const inputHash = await hashSecret(password);
+      const res = await db.query('SELECT * FROM users WHERE role = ? AND hash = ?', ['admin', inputHash]);
+      
+      if (res.values && res.values.length > 0) {
+        const admin = res.values[0];
+        set({ currentUser: { id: admin.id, badge: admin.badge, name: admin.name, role: admin.role } });
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  },
+
+  logout: () => set({ currentUser: null })
 }));

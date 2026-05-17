@@ -5,14 +5,14 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 import { encryptPackage, decryptPackage } from '../capacitor/crypto';
 
-export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; node_count?: number; }
+export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; }
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; attributes?: Record<string, string>; }; }
 export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; }
+export interface IntelNote { id: string; case_id: string; content: string; linked_nodes: string[]; created_at: string; } // 🚀 NEW
 
 interface CaseState {
-  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; 
-  selectedNodeId: string | null; selectedEdgeId: string | null; connectingFromId: string | null; auditLogs: AuditLog[];
-  hiddenNodeTypes: string[]; // 🚀 NEW: Tracks which entity types are currently hidden
+  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; auditLogs: AuditLog[]; notes: IntelNote[]; // 🚀 NEW
+  selectedNodeId: string | null; selectedEdgeId: string | null; connectingFromId: string | null; hiddenNodeTypes: string[];
 
   loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
@@ -23,8 +23,12 @@ interface CaseState {
   deleteNode: (nodeId: string) => Promise<void>; deleteEdge: (edgeId: string) => Promise<void>;
   setSelectedNodeId: (id: string | null) => void; setSelectedEdgeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
   exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
-  loadAuditLogs: () => Promise<void>; wipeDatabase: () => Promise<void>;
-  toggleFilter: (nodeType: string) => void; // 🚀 NEW: Toggles visibility
+  loadAuditLogs: () => Promise<void>; wipeDatabase: () => Promise<void>; toggleFilter: (nodeType: string) => void;
+  
+  // 🚀 NEW: Note actions
+  loadNotes: (caseId: string) => Promise<void>;
+  addNote: (content: string, linkedNodeIds: string[]) => Promise<void>;
+  deleteNote: (noteId: string) => Promise<void>;
 }
 
 const logAudit = async (action: string, targetId: string, details: string) => {
@@ -35,8 +39,14 @@ const logAudit = async (action: string, targetId: string, details: string) => {
   } catch (e) {}
 };
 
+// 🚀 NEW: Ensure notes table exists safely
+const ensureNotesTable = async () => {
+  const db = await getDb();
+  await db.run('CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, case_id TEXT, content TEXT, linked_nodes TEXT, created_at TEXT)');
+};
+
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [], activeCaseId: null, graphElements: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, auditLogs: [], hiddenNodeTypes: [],
+  cases: [], activeCaseId: null, graphElements: [], auditLogs: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
   
   loadCases: async () => {
     try {
@@ -47,8 +57,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   setActiveCase: (id) => { 
-    set({ activeCaseId: id, hiddenNodeTypes: [] }); // Reset filters on load
+    set({ activeCaseId: id, hiddenNodeTypes: [] }); 
     get().loadGraphElements(id); 
+    get().loadNotes(id); // 🚀 NEW
   },
 
   addCase: async (title, refNumber, caseType, classification) => {
@@ -152,21 +163,56 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
   setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
   setConnectingFromId: (id) => set({ connectingFromId: id }),
+  toggleFilter: (nodeType) => set(s => ({ hiddenNodeTypes: s.hiddenNodeTypes.includes(nodeType) ? s.hiddenNodeTypes.filter(t => t !== nodeType) : [...s.hiddenNodeTypes, nodeType] })),
+
+  // 🚀 NEW: Note Management Engine
+  loadNotes: async (caseId) => {
+    try {
+      await ensureNotesTable();
+      const db = await getDb();
+      const res = await db.query('SELECT * FROM notes WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
+      const loadedNotes = (res.values || []).map((n: any) => ({ ...n, linked_nodes: JSON.parse(n.linked_nodes || '[]') }));
+      set({ notes: loadedNotes });
+    } catch (e) {}
+  },
+
+  addNote: async (content, linkedNodeIds) => {
+    const { activeCaseId, notes } = get();
+    if (!activeCaseId) return;
+    const id = `note_${Date.now()}`;
+    const now = new Date().toISOString();
+    try {
+      await ensureNotesTable();
+      const db = await getDb();
+      await db.run('INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [id, activeCaseId, content, JSON.stringify(linkedNodeIds), now]);
+      await logAudit('ADD_NOTE', id, 'Intelligence note appended');
+      set({ notes: [{ id, case_id: activeCaseId, content, linked_nodes: linkedNodeIds, created_at: now }, ...notes] });
+    } catch (e) {}
+  },
+
+  deleteNote: async (noteId) => {
+    try {
+      const db = await getDb();
+      await db.run('DELETE FROM notes WHERE id = ?', [noteId]);
+      await logAudit('DELETE_NOTE', noteId, 'Destroyed');
+      set(s => ({ notes: s.notes.filter(n => n.id !== noteId) }));
+    } catch (e) {}
+  },
 
   exportActiveCase: async () => {
-    const { activeCaseId, cases, graphElements } = get();
+    const { activeCaseId, cases, graphElements, notes } = get();
     if (!activeCaseId) return;
     const activeCase = cases.find(c => c.id === activeCaseId);
     if (!activeCase) return;
 
-    const password = window.prompt("SECURE EXPORT: Enter a strong password to encrypt this intelligence package:");
-    if (!password) { alert("Export cancelled."); return; }
+    const password = window.prompt("SECURE EXPORT: Enter a strong password:");
+    if (!password) return;
 
     await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported Encrypted intelligence package');
 
     const exportData = {
       metadata: { reference: activeCase.reference_number, title: activeCase.title, classification: activeCase.classification, exported_at: new Date().toISOString(), system: "CrimeGraph v1.0" },
-      intelligence_nodes: graphElements.filter(e => !e.data.source), relationships: graphElements.filter(e => e.data.source)
+      intelligence_nodes: graphElements.filter(e => !e.data.source), relationships: graphElements.filter(e => e.data.source), notes: notes // 🚀 NEW: Include notes in export
     };
 
     try {
@@ -177,15 +223,13 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       const fileResult = await Filesystem.writeFile({ path: fileName, data: encryptedPayload, directory: Directory.Cache, encoding: Encoding.UTF8 });
       useAuthStore.getState().setIntentionalBackground(true);
       const canShare = await Share.canShare();
-      if (canShare.value) {
-        await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Data`, url: fileResult.uri, dialogTitle: 'Export Secure Package' });
-      }
-    } catch (error) { alert('Failed to export.'); }
+      if (canShare.value) await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Data`, url: fileResult.uri, dialogTitle: 'Export' });
+    } catch (e) { alert('Export failed.'); }
   },
 
   importCase: async (encryptedData: string) => {
-    const password = window.prompt("SECURE IMPORT: Enter the decryption password:");
-    if (!password) { alert("Import cancelled."); return; }
+    const password = window.prompt("SECURE IMPORT: Enter decryption password:");
+    if (!password) return;
 
     try {
       const jsonStr = await decryptPackage(encryptedData, password);
@@ -211,10 +255,19 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         const newEdgeId = `edge_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
         const newSource = idMap.get(edge.data.source);
         const newTarget = idMap.get(edge.data.target);
-        if (newSource && newTarget) {
-          await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]);
+        if (newSource && newTarget) await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]);
+      }
+      
+      // 🚀 NEW: Import Notes
+      await ensureNotesTable();
+      if (data.notes) {
+        for (const note of data.notes) {
+          const newNoteId = `note_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+          const newLinkedNodes = note.linked_nodes.map((oldId: string) => idMap.get(oldId)).filter(Boolean);
+          await db.run('INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [newNoteId, newCaseId, note.content, JSON.stringify(newLinkedNodes), note.created_at || now]);
         }
       }
+
       get().loadCases();
       await logAudit('IMPORT_CASE', newCaseId, `Imported: ${title}`);
     } catch (e) { alert('Decryption failed.'); throw e; }
@@ -232,18 +285,10 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     try {
       const db = await getDb();
       await db.run('DELETE FROM edges'); await db.run('DELETE FROM nodes'); await db.run('DELETE FROM cases'); await db.run('DELETE FROM audit_logs');
-      set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [] });
+      try { await db.run('DELETE FROM notes'); } catch(e){} // 🚀 NEW
+      set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], notes: [] });
       await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'Wiped via Kill Switch');
       get().loadAuditLogs(); get().loadCases();
     } catch (e) {}
-  },
-
-  // 🚀 NEW: Filter logic
-  toggleFilter: (nodeType: string) => {
-    set(state => ({
-      hiddenNodeTypes: state.hiddenNodeTypes.includes(nodeType)
-        ? state.hiddenNodeTypes.filter(t => t !== nodeType)
-        : [...state.hiddenNodeTypes, nodeType]
-    }));
   }
 }));

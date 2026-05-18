@@ -19,7 +19,6 @@ interface AuthState {
   logout: () => void;
 }
 
-// 🚀 FIX: Fallback Hashing to prevent WebView crashes
 const hashSecret = async (secret: string) => {
   try {
     if (window.crypto && window.crypto.subtle) {
@@ -32,7 +31,6 @@ const hashSecret = async (secret: string) => {
     console.warn("WebCrypto unavailable, using fallback.");
   }
   
-  // Fallback hash for strict offline WebViews
   let hash = 0;
   for (let i = 0; i < secret.length; i++) {
     const char = secret.charCodeAt(i);
@@ -56,13 +54,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   initializeAuth: async () => {
     try {
       const db = await getDb();
+      
+      // 🚀 THE FIX: Self-Healing Schema Check
+      try {
+        await db.query('SELECT badge FROM users LIMIT 1');
+      } catch (schemaError) {
+        console.warn("Old/Malformed users table detected. Executing schema wipe...");
+        await db.run('DROP TABLE IF EXISTS users');
+      }
+
       await db.run('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE, name TEXT, hash TEXT, role TEXT, created_at TEXT)');
+      
       const res = await db.query('SELECT COUNT(*) as count FROM users');
       const count = res.values?.[0]?.count || 0;
       set({ isFirstBoot: count === 0, isAppReady: true });
     } catch (e) { 
       console.error("Auth DB Init Error", e); 
-      set({ isAppReady: true }); // Force ready even if error so we can see it
+      set({ isAppReady: true });
     }
   },
 

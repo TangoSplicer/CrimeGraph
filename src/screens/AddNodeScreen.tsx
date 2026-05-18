@@ -13,7 +13,6 @@ const nodeTypes = [
   { id: 'evidence', label: 'Evidence', icon: '💼', color: 'bg-[#1a8a4a]' },
 ];
 
-// 🚀 SMART METADATA TEMPLATES (UK English)
 const metadataTemplates: Record<string, string[]> = {
   person: ['Alias', 'Date of Birth', 'National Insurance'],
   vehicle: ['Registration (VRM)', 'Make/Model', 'Colour'],
@@ -34,7 +33,6 @@ export const AddNodeScreen: React.FC = () => {
   const [confidence, setConfidence] = useState(3);
   const [attributes, setAttributes] = useState<{key: string, value: string}[]>([]);
 
-  // 🚀 Auto-populate fields based on POLE type
   useEffect(() => {
     const templateKeys = metadataTemplates[selectedType] || [];
     setAttributes(templateKeys.map(key => ({ key, value: '' })));
@@ -62,13 +60,14 @@ export const AddNodeScreen: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe">
-      <div className="flex items-center justify-between p-4 bg-[#14171f] border-b border-[#252a3a]">
+    <div className="h-screen bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe">
+      <div className="flex items-center justify-between p-4 bg-[#14171f] border-b border-[#252a3a] shrink-0">
         <h1 className="text-lg font-bold">Add Intelligence Node</h1>
         <button onClick={() => navigate('/workspace')} className="text-[#7880a0] font-bold text-sm">CANCEL</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-24">
+      {/* The form container handles all the scrolling natively now */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-3 tracking-wider">Entity Type</label>
           <div className="grid grid-cols-2 gap-3">
@@ -111,12 +110,13 @@ export const AddNodeScreen: React.FC = () => {
             ))}
           </div>
         </section>
-      </div>
 
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#14171f] border-t border-[#252a3a] pb-safe z-50">
-        <button onClick={handleSubmit} disabled={!label.trim()} className="w-full py-4 bg-[#3a7bd5] hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] text-white font-bold rounded text-lg transition-colors shadow-[0_0_15px_rgba(58,123,213,0.3)] disabled:shadow-none">
-          Deploy Node
-        </button>
+        {/* 🚀 THE FIX: Button moved inside the scroll flow */}
+        <div className="pt-6 pb-8">
+          <button onClick={handleSubmit} disabled={!label.trim()} className="w-full py-4 bg-[#3a7bd5] hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] text-white font-bold rounded text-lg transition-colors shadow-[0_0_15px_rgba(58,123,213,0.3)] disabled:shadow-none">
+            Deploy Node
+          </button>
+        </div>
       </div>
     </div>
   );

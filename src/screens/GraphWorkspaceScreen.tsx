@@ -51,7 +51,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   if (!activeCase) return null;
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#0c0e14] relative">
+    <div className="flex flex-col w-full h-screen pb-16 bg-[#0c0e14] relative">
       <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe z-20 flex justify-between items-center shadow-md">
         <div>
           <h2 className="text-sm font-mono text-[#3a7bd5]">{activeCase.reference_number}</h2>
@@ -138,7 +138,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
       <div className="flex-1 relative overflow-hidden" onClick={() => { setIsFilterOpen(false); setIsNotesOpen(false); }}>
         <GraphCanvas />
         {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
-          <button onClick={() => navigate('/add')} className="absolute bottom-6 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">
+          <button onClick={() => navigate('/add')} className="absolute bottom-24 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">
             +
           </button>
         )}

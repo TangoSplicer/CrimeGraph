@@ -1,101 +1,78 @@
-import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useCaseStore } from '../stores/caseStore';
+import React, { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { useCaseStore } from '../stores/caseStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const SettingsScreen: React.FC = () => {
-  const navigate = useNavigate();
-  const { auditLogs, loadAuditLogs, wipeDatabase } = useCaseStore();
-  const { lock, currentUser } = useAuthStore();
+  const { currentUser, logout, addAnalyst } = useAuthStore();
+  const { wipeDatabase } = useCaseStore();
+  
+  const [newBadge, setNewBadge] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [adminMsg, setAdminMsg] = useState('');
 
-  useEffect(() => {
-    loadAuditLogs();
-  }, [loadAuditLogs]);
-
-  const handleWipe = () => {
-    const confirm1 = window.confirm("WARNING: You are about to initiate a forensic wipe. All intelligence data will be permanently overwritten. Proceed?");
-    if (confirm1) {
-      const confirm2 = window.prompt("Type 'WIPE' to confirm complete data destruction:");
-      if (confirm2 === 'WIPE') {
-        wipeDatabase();
-        alert("All operational data has been destroyed.");
-        navigate('/');
-      } else {
-        alert("Wipe aborted.");
-      }
+  const handleWipe = async () => {
+    if (window.confirm("CRITICAL WARNING: This will permanently destroy all local intelligence. Proceed?")) {
+      await wipeDatabase();
+      logout();
     }
   };
 
-  const formatDate = (isoString: string) => {
-    const d = new Date(isoString);
-    return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}`;
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPin.length !== 6) return setAdminMsg('PIN must be exactly 6 digits.');
+    try {
+      await addAnalyst(newBadge, newName, newPin);
+      setAdminMsg(`Officer ${newBadge} successfully provisioned.`);
+      setNewBadge(''); setNewName(''); setNewPin('');
+    } catch (err) {
+      setAdminMsg('Failed to add user. Badge may already exist.');
+    }
   };
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#0c0e14]">
-      <div className="px-4 py-4 bg-[#14171f] border-b border-[#252a3a] pt-safe shadow-md z-10 flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-mono text-[#dde1ec]">Administration</h1>
-          <p className="text-[#7880a0] text-xs mt-1">Security & Audit Hub</p>
-        </div>
-        <div className="text-right">
-          <p className="text-[10px] text-[#7880a0] uppercase tracking-widest">Logged in as</p>
-          <p className="text-sm font-bold text-[#3a7bd5]">{currentUser?.name || 'ADMIN'}</p>
-        </div>
+    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe relative pb-16">
+      <div className="p-4 bg-[#14171f] border-b border-[#252a3a] shrink-0">
+        <h1 className="text-xl font-bold tracking-widest text-white uppercase">System Settings</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-8">
-        
-        {/* Security Controls */}
-        <section>
-          <h2 className="text-xs font-bold text-[#7880a0] uppercase tracking-widest mb-3 border-b border-[#252a3a] pb-1">Session Security</h2>
-          <div className="space-y-3">
-            <button 
-              onClick={lock}
-              className="w-full py-3 bg-[#1c2030] text-[#dde1ec] border border-[#454d66] rounded flex justify-between items-center px-4 hover:bg-[#252a3a]"
-            >
-              <span className="font-bold">Lock Application</span>
-              <span>🔒</span>
-            </button>
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* User Profile */}
+        <section className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4">
+          <h2 className="text-xs font-bold text-[#7880a0] uppercase tracking-widest mb-4 border-b border-[#252a3a] pb-2">Active Operator</h2>
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-bold uppercase">{currentUser?.name}</span>
+            <span className="text-[10px] bg-[#3a7bd5] text-white px-2 py-1 rounded font-mono">{currentUser?.badge}</span>
+          </div>
+          <p className="text-[10px] text-[#7880a0] uppercase tracking-widest mb-4">Clearance: {currentUser?.role}</p>
+          <button onClick={logout} className="w-full py-3 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase hover:bg-[#252a3a]">Terminate Session</button>
+        </section>
+
+        {/* Master Admin Controls */}
+        {currentUser?.role === 'admin' && (
+          <section className="bg-[#1c2030] border border-[#f39c12] rounded-lg p-4">
+            <h2 className="text-xs font-bold text-[#f39c12] uppercase tracking-widest mb-4 border-b border-[#f39c12]/30 pb-2">Admin Command Deck</h2>
+            <p className="text-[10px] text-[#7880a0] mb-4">Provision new operator access to local hardware.</p>
             
-            <button 
-              onClick={handleWipe}
-              className="w-full py-3 bg-[#3d0000] text-[#e74c3c] border border-[#e74c3c] rounded flex justify-between items-center px-4 font-bold shadow-[0_0_15px_rgba(231,76,60,0.2)]"
-            >
-              <span>INITIATE KILL SWITCH (WIPE DATA)</span>
-              <span>⚠️</span>
-            </button>
-          </div>
-        </section>
+            <form onSubmit={handleAddUser} className="space-y-3">
+              <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value)} required placeholder="BADGE (e.g. WYP-112)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
+              <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OFFICER NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
+              <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} required placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
+              <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Officer</button>
+            </form>
+            {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}
+          </section>
+        )}
 
-        {/* Audit Ledger */}
-        <section>
-          <h2 className="text-xs font-bold text-[#7880a0] uppercase tracking-widest mb-3 border-b border-[#252a3a] pb-1 flex justify-between">
-            <span>Immutable Audit Ledger</span>
-            <span className="text-[#3a7bd5]">Latest 100</span>
-          </h2>
-          <div className="bg-[#14171f] border border-[#252a3a] rounded overflow-hidden">
-            {auditLogs.length === 0 ? (
-              <p className="p-4 text-center text-xs text-[#7880a0]">No audit records found.</p>
-            ) : (
-              <div className="divide-y divide-[#252a3a]">
-                {auditLogs.map((log) => (
-                  <div key={log.id} className="p-3">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-[10px] font-mono text-[#3a7bd5]">{log.action}</span>
-                      <span className="text-[9px] text-[#7880a0]">{formatDate(log.timestamp)}</span>
-                    </div>
-                    <p className="text-xs text-[#dde1ec] mb-1">{log.details}</p>
-                    <p className="text-[9px] text-[#7880a0] font-mono">User ID: {log.user_id} | Target: {log.target_id?.substring(0,12)}...</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {/* The Kill Switch */}
+        <section className="bg-[#1c2030] border border-[#c0392b] rounded-lg p-4 mt-8">
+          <h2 className="text-xs font-bold text-[#c0392b] uppercase tracking-widest mb-4 border-b border-[#c0392b]/30 pb-2">Emergency Protocols</h2>
+          <p className="text-xs text-[#7880a0] mb-4">Engaging this protocol will permanently sanitise the device SQLite database, destroying all unexported intelligence.</p>
+          <button onClick={handleWipe} className="w-full py-4 bg-[#c0392b] text-white rounded text-sm font-bold uppercase tracking-widest shadow-[0_0_15px_rgba(192,57,43,0.4)] hover:bg-[#a93226]">WIPE ALL DATA</button>
         </section>
-
       </div>
+
       <BottomTabBar />
     </div>
   );

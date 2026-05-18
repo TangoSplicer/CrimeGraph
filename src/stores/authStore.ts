@@ -7,6 +7,14 @@ interface AuthState {
   currentUser: User | null;
   isFirstBoot: boolean;
   isAppReady: boolean;
+  
+  // Restored Biometric/App Lifecycle States
+  isLocked: boolean;
+  intentionalBackground: boolean;
+  lock: () => void;
+  unlock: () => void;
+  setIntentionalBackground: (state: boolean) => void;
+
   initializeAuth: () => Promise<void>;
   setupMasterAdmin: (password: string) => Promise<void>;
   login: (badge: string, pin: string) => Promise<boolean>;
@@ -14,7 +22,6 @@ interface AuthState {
   logout: () => void;
 }
 
-// Secure SHA-256 Hashing for offline PINs/Passwords
 const hashSecret = async (secret: string) => {
   const msgBuffer = new TextEncoder().encode(secret);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -22,24 +29,24 @@ const hashSecret = async (secret: string) => {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   currentUser: null,
   isFirstBoot: true,
   isAppReady: false,
+  isLocked: false,
+  intentionalBackground: false,
+
+  lock: () => set({ isLocked: true }),
+  unlock: () => set({ isLocked: false }),
+  setIntentionalBackground: (state) => set({ intentionalBackground: state }),
 
   initializeAuth: async () => {
     try {
       const db = await getDb();
       await db.run('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE, name TEXT, hash TEXT, role TEXT, created_at TEXT)');
-      
       const res = await db.query('SELECT COUNT(*) as count FROM users');
       const count = res.values?.[0]?.count || 0;
-      
-      if (count === 0) {
-        set({ isFirstBoot: true, isAppReady: true });
-      } else {
-        set({ isFirstBoot: false, isAppReady: true });
-      }
+      set({ isFirstBoot: count === 0, isAppReady: true });
     } catch (e) { console.error("Auth DB Init Error", e); }
   },
 
@@ -48,16 +55,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const db = await getDb();
       const hash = await hashSecret(password);
       const now = new Date().toISOString();
-      
-      // 1. Create Master Admin
-      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', 
-        ['admin_001', 'ADMIN', 'Master Admin', hash, 'admin', now]);
-      
-      // 2. Inject the deliberate Test Case
+      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', ['admin_001', 'ADMIN', 'Master Admin', hash, 'admin', now]);
       const testHash = await hashSecret('123456');
-      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', 
-        ['test_001', 'TEST-99', 'Test Analyst', testHash, 'analyst', now]);
-
+      await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', ['test_001', 'TEST-99', 'Test Analyst', testHash, 'analyst', now]);
       set({ isFirstBoot: false });
     } catch (e) { throw e; }
   },
@@ -67,7 +67,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const db = await getDb();
       const inputHash = await hashSecret(pin);
       const res = await db.query('SELECT * FROM users WHERE badge = ? AND hash = ? AND role = ?', [badge.toUpperCase(), inputHash, 'analyst']);
-      
       if (res.values && res.values.length > 0) {
         const user = res.values[0];
         set({ currentUser: { id: user.id, badge: user.badge, name: user.name, role: user.role } });
@@ -82,7 +81,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const db = await getDb();
       const inputHash = await hashSecret(password);
       const res = await db.query('SELECT * FROM users WHERE role = ? AND hash = ?', ['admin', inputHash]);
-      
       if (res.values && res.values.length > 0) {
         const admin = res.values[0];
         set({ currentUser: { id: admin.id, badge: admin.badge, name: admin.name, role: admin.role } });
@@ -92,5 +90,5 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (e) { return false; }
   },
 
-  logout: () => set({ currentUser: null })
+  logout: () => set({ currentUser: null, isLocked: true })
 }));

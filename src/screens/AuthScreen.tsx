@@ -1,6 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { ShieldCheckIcon } from '@heroicons/react/24/solid';
+
+const ShieldIcon = ({ className }: { className: string }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <path fillRule="evenodd" d="M12.516 2.17a.75.75 0 00-1.032 0 11.209 11.209 0 01-7.877 3.08.75.75 0 00-.722.515A12.74 12.74 0 002.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 00.374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 00-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08zm3.094 8.016a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clipRule="evenodd" />
+  </svg>
+);
 
 export const AuthScreen: React.FC = () => {
   const { isFirstBoot, setupMasterAdmin, login, adminLogin } = useAuthStore();
@@ -10,14 +15,13 @@ export const AuthScreen: React.FC = () => {
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'standard' | 'admin'>('standard');
   
-  // Hidden Trigger Logic
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const handlePressStart = () => {
     pressTimer.current = setTimeout(() => {
       setMode('admin');
       setError('');
-    }, 3000); // 3 seconds exact
+    }, 3000);
   };
 
   const handlePressEnd = () => {
@@ -45,7 +49,7 @@ export const AuthScreen: React.FC = () => {
   if (isFirstBoot) {
     return (
       <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec]">
-        <ShieldCheckIcon className="w-16 h-16 text-[#e74c3c] mb-6" />
+        <ShieldIcon className="w-16 h-16 text-[#e74c3c] mb-6" />
         <h1 className="text-xl font-bold tracking-widest text-[#e74c3c] mb-2 uppercase">System Commissioning</h1>
         <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected on local hardware. Establish primary cryptographic password now.</p>
         
@@ -58,19 +62,12 @@ export const AuthScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec] relative pt-safe">
-      <div 
-        className="mb-8 p-4 cursor-pointer"
-        onPointerDown={handlePressStart}
-        onPointerUp={handlePressEnd}
-        onPointerLeave={handlePressEnd}
-      >
-        <ShieldCheckIcon className={`w-20 h-20 transition-colors duration-1000 ${mode === 'admin' ? 'text-[#e74c3c]' : 'text-[#3a7bd5]'}`} />
+      <div className="mb-8 p-4 cursor-pointer" onPointerDown={handlePressStart} onPointerUp={handlePressEnd} onPointerLeave={handlePressEnd}>
+        <ShieldIcon className={`w-20 h-20 transition-colors duration-1000 ${mode === 'admin' ? 'text-[#e74c3c]' : 'text-[#3a7bd5]'}`} />
       </div>
-
       <h1 className="text-2xl font-bold tracking-widest mb-8 uppercase text-center">
         {mode === 'admin' ? <span className="text-[#e74c3c]">COMMAND DECK</span> : 'CRIMEGRAPH'}
       </h1>
-
       <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
         {mode === 'standard' ? (
           <>
@@ -80,17 +77,12 @@ export const AuthScreen: React.FC = () => {
         ) : (
           <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="MASTER PASSWORD" className="w-full bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center tracking-widest font-mono focus:outline-none focus:border-[#e74c3c]" />
         )}
-        
         <button type="submit" className={`w-full font-bold py-4 rounded uppercase tracking-wider transition-colors ${mode === 'admin' ? 'bg-[#e74c3c] hover:bg-[#c0392b] text-white' : 'bg-[#3a7bd5] hover:bg-[#4a8be5] text-white'}`}>
           {mode === 'admin' ? 'AUTHORISE OVERRIDE' : 'AUTHENTICATE'}
         </button>
       </form>
-
       {error && <p className="text-[#e74c3c] text-xs mt-6 font-bold uppercase tracking-widest">{error}</p>}
-      
-      {mode === 'admin' && (
-        <button onClick={() => { setMode('standard'); setAdminPass(''); setError(''); }} className="mt-8 text-xs text-[#7880a0] font-bold">ABORT OVERRIDE</button>
-      )}
+      {mode === 'admin' && <button onClick={() => { setMode('standard'); setAdminPass(''); setError(''); }} className="mt-8 text-xs text-[#7880a0] font-bold">ABORT OVERRIDE</button>}
     </div>
   );
 };

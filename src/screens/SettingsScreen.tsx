@@ -41,7 +41,7 @@ export const SettingsScreen: React.FC = () => {
         </div>
         <div className="text-right">
           <p className="text-[10px] text-[#7880a0] uppercase tracking-widest">Logged in as</p>
-          <p className="text-sm font-bold text-[#3a7bd5]">{currentUser?.username || 'ADMIN'}</p>
+          <p className="text-sm font-bold text-[#3a7bd5]">{currentUser?.name || 'ADMIN'}</p>
         </div>
       </div>
 

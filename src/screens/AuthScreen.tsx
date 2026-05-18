@@ -18,35 +18,31 @@ export const AuthScreen: React.FC = () => {
   
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
+  // Triggered on touch start
   const handlePressStart = () => {
     pressTimer.current = setTimeout(() => {
+      if(navigator.vibrate) navigator.vibrate(50); // Give haptic feedback when activated
       setMode('admin');
       setError('');
     }, 3000);
   };
 
+  // Triggered if finger moves or lifts
   const handlePressEnd = () => {
     if (pressTimer.current) clearTimeout(pressTimer.current);
   };
 
   const handleFirstBoot = async () => {
     if (adminPass.length < 8) return setError('Master password must be 8+ characters.');
-    setIsLoading(true);
-    setError('');
-    try {
-      await setupMasterAdmin(adminPass);
-    } catch (err: any) {
-      setError(`SYS ERROR: ${err.message || 'Unknown DB failure'}`);
-    } finally {
-      setIsLoading(false);
-    }
+    setIsLoading(true); setError('');
+    try { await setupMasterAdmin(adminPass); } 
+    catch (err: any) { setError(`SYS ERROR: ${err.message}`); } 
+    finally { setIsLoading(false); }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setIsLoading(true);
-    
+    setError(''); setIsLoading(true);
     try {
       if (mode === 'admin') {
         const success = await adminLogin(adminPass);
@@ -55,11 +51,8 @@ export const AuthScreen: React.FC = () => {
         const success = await login(badge, pin);
         if (!success) setError('Invalid Badge or PIN.');
       }
-    } catch (err: any) {
-      setError(`SYS ERROR: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (err: any) { setError(`SYS ERROR: ${err.message}`); } 
+    finally { setIsLoading(false); }
   };
 
   if (isFirstBoot) {
@@ -67,12 +60,9 @@ export const AuthScreen: React.FC = () => {
       <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec]">
         <ShieldIcon className="w-16 h-16 text-[#e74c3c] mb-6" />
         <h1 className="text-xl font-bold tracking-widest text-[#e74c3c] mb-2 uppercase">System Commissioning</h1>
-        <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected on local hardware. Establish primary cryptographic password now.</p>
-        
+        <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected. Establish primary password.</p>
         <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Master Password" disabled={isLoading} className="w-full max-w-sm bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center text-lg tracking-widest focus:outline-none mb-4 disabled:opacity-50" />
-        <button onClick={handleFirstBoot} disabled={isLoading} className="w-full max-w-sm bg-[#e74c3c] text-white font-bold py-4 rounded disabled:opacity-50">
-          {isLoading ? 'PROCESSING...' : 'INITIALISE HARDWARE'}
-        </button>
+        <button onClick={handleFirstBoot} disabled={isLoading} className="w-full max-w-sm bg-[#e74c3c] text-white font-bold py-4 rounded disabled:opacity-50">INITIALISE HARDWARE</button>
         {error && <p className="text-[#e74c3c] text-xs mt-4 font-bold">{error}</p>}
       </div>
     );
@@ -80,23 +70,35 @@ export const AuthScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec] relative pt-safe">
-      <div className="mb-8 p-4 cursor-pointer" onPointerDown={handlePressStart} onPointerUp={handlePressEnd} onPointerLeave={handlePressEnd}>
+      
+      {/* THE HIDDEN TRIGGER: Added touch events for mobile precision */}
+      <div 
+        className="mb-8 p-4 cursor-pointer select-none" 
+        onTouchStart={handlePressStart} 
+        onTouchEnd={handlePressEnd} 
+        onTouchCancel={handlePressEnd}
+        onMouseDown={handlePressStart}
+        onMouseUp={handlePressEnd}
+        onMouseLeave={handlePressEnd}
+      >
         <ShieldIcon className={`w-20 h-20 transition-colors duration-1000 ${mode === 'admin' ? 'text-[#e74c3c]' : 'text-[#3a7bd5]'}`} />
       </div>
+
       <h1 className="text-2xl font-bold tracking-widest mb-8 uppercase text-center">
         {mode === 'admin' ? <span className="text-[#e74c3c]">COMMAND DECK</span> : 'CRIMEGRAPH'}
       </h1>
+
       <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
         {mode === 'standard' ? (
           <>
-            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE NUMBER (e.g. TEST-99)" disabled={isLoading} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
+            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE (e.g. TEST-99)" disabled={isLoading} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
             <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="6-DIGIT PIN" maxLength={6} disabled={isLoading} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center tracking-[1em] font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
           </>
         ) : (
           <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="MASTER PASSWORD" disabled={isLoading} className="w-full bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center tracking-widest font-mono focus:outline-none focus:border-[#e74c3c] disabled:opacity-50" />
         )}
         <button type="submit" disabled={isLoading} className={`w-full font-bold py-4 rounded uppercase tracking-wider transition-colors disabled:opacity-50 ${mode === 'admin' ? 'bg-[#e74c3c] hover:bg-[#c0392b] text-white' : 'bg-[#3a7bd5] hover:bg-[#4a8be5] text-white'}`}>
-          {isLoading ? 'PROCESSING...' : (mode === 'admin' ? 'AUTHORISE OVERRIDE' : 'AUTHENTICATE')}
+          {mode === 'admin' ? 'AUTHORISE OVERRIDE' : 'AUTHENTICATE'}
         </button>
       </form>
       {error && <p className="text-[#e74c3c] text-xs mt-6 font-bold uppercase tracking-widest">{error}</p>}

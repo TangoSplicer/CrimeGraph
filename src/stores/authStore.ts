@@ -7,14 +7,11 @@ interface AuthState {
   currentUser: User | null;
   isFirstBoot: boolean;
   isAppReady: boolean;
-  
-  // Restored Biometric/App Lifecycle States
   isLocked: boolean;
   intentionalBackground: boolean;
   lock: () => void;
   unlock: () => void;
   setIntentionalBackground: (state: boolean) => void;
-
   initializeAuth: () => Promise<void>;
   setupMasterAdmin: (password: string) => Promise<void>;
   login: (badge: string, pin: string) => Promise<boolean>;
@@ -22,11 +19,27 @@ interface AuthState {
   logout: () => void;
 }
 
+// 🚀 FIX: Fallback Hashing to prevent WebView crashes
 const hashSecret = async (secret: string) => {
-  const msgBuffer = new TextEncoder().encode(secret);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  try {
+    if (window.crypto && window.crypto.subtle) {
+      const msgBuffer = new TextEncoder().encode(secret);
+      const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch (e) {
+    console.warn("WebCrypto unavailable, using fallback.");
+  }
+  
+  // Fallback hash for strict offline WebViews
+  let hash = 0;
+  for (let i = 0; i < secret.length; i++) {
+    const char = secret.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; 
+  }
+  return "fb_" + Math.abs(hash).toString(16);
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -47,7 +60,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       const res = await db.query('SELECT COUNT(*) as count FROM users');
       const count = res.values?.[0]?.count || 0;
       set({ isFirstBoot: count === 0, isAppReady: true });
-    } catch (e) { console.error("Auth DB Init Error", e); }
+    } catch (e) { 
+      console.error("Auth DB Init Error", e); 
+      set({ isAppReady: true }); // Force ready even if error so we can see it
+    }
   },
 
   setupMasterAdmin: async (password: string) => {
@@ -56,10 +72,13 @@ export const useAuthStore = create<AuthState>((set) => ({
       const hash = await hashSecret(password);
       const now = new Date().toISOString();
       await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', ['admin_001', 'ADMIN', 'Master Admin', hash, 'admin', now]);
+      
       const testHash = await hashSecret('123456');
       await db.run('INSERT INTO users (id, badge, name, hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)', ['test_001', 'TEST-99', 'Test Analyst', testHash, 'analyst', now]);
       set({ isFirstBoot: false });
-    } catch (e) { throw e; }
+    } catch (e: any) { 
+      throw new Error(e.message || "Database insert failed"); 
+    }
   },
 
   login: async (badge: string, pin: string) => {

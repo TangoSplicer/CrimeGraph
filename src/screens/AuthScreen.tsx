@@ -14,6 +14,7 @@ export const AuthScreen: React.FC = () => {
   const [adminPass, setAdminPass] = useState('');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'standard' | 'admin'>('standard');
+  const [isLoading, setIsLoading] = useState(false);
   
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -30,19 +31,34 @@ export const AuthScreen: React.FC = () => {
 
   const handleFirstBoot = async () => {
     if (adminPass.length < 8) return setError('Master password must be 8+ characters.');
-    await setupMasterAdmin(adminPass);
+    setIsLoading(true);
+    setError('');
+    try {
+      await setupMasterAdmin(adminPass);
+    } catch (err: any) {
+      setError(`SYS ERROR: ${err.message || 'Unknown DB failure'}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
     
-    if (mode === 'admin') {
-      const success = await adminLogin(adminPass);
-      if (!success) setError('Unauthorised Access.');
-    } else {
-      const success = await login(badge, pin);
-      if (!success) setError('Invalid Badge or PIN.');
+    try {
+      if (mode === 'admin') {
+        const success = await adminLogin(adminPass);
+        if (!success) setError('Unauthorised Access.');
+      } else {
+        const success = await login(badge, pin);
+        if (!success) setError('Invalid Badge or PIN.');
+      }
+    } catch (err: any) {
+      setError(`SYS ERROR: ${err.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -53,8 +69,10 @@ export const AuthScreen: React.FC = () => {
         <h1 className="text-xl font-bold tracking-widest text-[#e74c3c] mb-2 uppercase">System Commissioning</h1>
         <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected on local hardware. Establish primary cryptographic password now.</p>
         
-        <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Master Password" className="w-full max-w-sm bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center text-lg tracking-widest focus:outline-none mb-4" />
-        <button onClick={handleFirstBoot} className="w-full max-w-sm bg-[#e74c3c] text-white font-bold py-4 rounded">INITIALISE HARDWARE</button>
+        <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Master Password" disabled={isLoading} className="w-full max-w-sm bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center text-lg tracking-widest focus:outline-none mb-4 disabled:opacity-50" />
+        <button onClick={handleFirstBoot} disabled={isLoading} className="w-full max-w-sm bg-[#e74c3c] text-white font-bold py-4 rounded disabled:opacity-50">
+          {isLoading ? 'PROCESSING...' : 'INITIALISE HARDWARE'}
+        </button>
         {error && <p className="text-[#e74c3c] text-xs mt-4 font-bold">{error}</p>}
       </div>
     );
@@ -71,14 +89,14 @@ export const AuthScreen: React.FC = () => {
       <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
         {mode === 'standard' ? (
           <>
-            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE NUMBER (e.g. TEST-99)" className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5]" />
-            <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center tracking-[1em] font-mono focus:outline-none focus:border-[#3a7bd5]" />
+            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE NUMBER (e.g. TEST-99)" disabled={isLoading} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
+            <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="6-DIGIT PIN" maxLength={6} disabled={isLoading} className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center tracking-[1em] font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
           </>
         ) : (
-          <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="MASTER PASSWORD" className="w-full bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center tracking-widest font-mono focus:outline-none focus:border-[#e74c3c]" />
+          <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="MASTER PASSWORD" disabled={isLoading} className="w-full bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center tracking-widest font-mono focus:outline-none focus:border-[#e74c3c] disabled:opacity-50" />
         )}
-        <button type="submit" className={`w-full font-bold py-4 rounded uppercase tracking-wider transition-colors ${mode === 'admin' ? 'bg-[#e74c3c] hover:bg-[#c0392b] text-white' : 'bg-[#3a7bd5] hover:bg-[#4a8be5] text-white'}`}>
-          {mode === 'admin' ? 'AUTHORISE OVERRIDE' : 'AUTHENTICATE'}
+        <button type="submit" disabled={isLoading} className={`w-full font-bold py-4 rounded uppercase tracking-wider transition-colors disabled:opacity-50 ${mode === 'admin' ? 'bg-[#e74c3c] hover:bg-[#c0392b] text-white' : 'bg-[#3a7bd5] hover:bg-[#4a8be5] text-white'}`}>
+          {isLoading ? 'PROCESSING...' : (mode === 'admin' ? 'AUTHORISE OVERRIDE' : 'AUTHENTICATE')}
         </button>
       </form>
       {error && <p className="text-[#e74c3c] text-xs mt-6 font-bold uppercase tracking-widest">{error}</p>}

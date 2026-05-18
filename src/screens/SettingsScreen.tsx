@@ -1,16 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useCaseStore } from '../stores/caseStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, logout, addAnalyst } = useAuthStore();
-  const { wipeDatabase } = useCaseStore();
+  const { wipeDatabase, auditLogs, loadAuditLogs } = useCaseStore();
   
   const [newBadge, setNewBadge] = useState('');
   const [newName, setNewName] = useState('');
   const [newPin, setNewPin] = useState('');
   const [adminMsg, setAdminMsg] = useState('');
+  
+  // 🚀 Audit Log Filter State
+  const [auditFilter, setAuditFilter] = useState('');
+
+  // 🚀 Load logs if user is admin
+  useEffect(() => {
+    if (currentUser?.role === 'admin') {
+      loadAuditLogs();
+    }
+  }, [currentUser, loadAuditLogs]);
 
   const handleWipe = async () => {
     if (window.confirm("CRITICAL WARNING: This will permanently destroy all local intelligence. Proceed?")) {
@@ -31,6 +41,8 @@ export const SettingsScreen: React.FC = () => {
     }
   };
 
+  const filteredLogs = auditLogs.filter(log => log.user_id.toLowerCase().includes(auditFilter.toLowerCase()));
+
   return (
     <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe relative pb-16">
       <div className="p-4 bg-[#14171f] border-b border-[#252a3a] shrink-0">
@@ -38,6 +50,7 @@ export const SettingsScreen: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        
         {/* User Profile */}
         <section className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4">
           <h2 className="text-xs font-bold text-[#7880a0] uppercase tracking-widest mb-4 border-b border-[#252a3a] pb-2">Active Operator</h2>
@@ -51,21 +64,51 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Master Admin Controls */}
         {currentUser?.role === 'admin' && (
-          <section className="bg-[#1c2030] border border-[#f39c12] rounded-lg p-4">
-            <h2 className="text-xs font-bold text-[#f39c12] uppercase tracking-widest mb-4 border-b border-[#f39c12]/30 pb-2">Admin Command Deck</h2>
-            <p className="text-[10px] text-[#7880a0] mb-4">Provision new operator access to local hardware.</p>
-            
-            <form onSubmit={handleAddUser} className="space-y-3">
-              <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value)} required placeholder="BADGE (e.g. WYP-112)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
-              <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OFFICER NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
-              <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} required placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
-              <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Officer</button>
-            </form>
-            {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}
-          </section>
+          <>
+            <section className="bg-[#1c2030] border border-[#f39c12] rounded-lg p-4">
+              <h2 className="text-xs font-bold text-[#f39c12] uppercase tracking-widest mb-4 border-b border-[#f39c12]/30 pb-2">Admin Command Deck</h2>
+              <p className="text-[10px] text-[#7880a0] mb-4">Provision new operator access to local hardware.</p>
+              <form onSubmit={handleAddUser} className="space-y-3">
+                <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value)} required placeholder="BADGE (e.g. WYP-112)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
+                <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OFFICER NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
+                <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} required placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
+                <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Officer</button>
+              </form>
+              {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}
+            </section>
+
+            {/* 🚀 THE IMMUTABLE AUDIT LEDGER */}
+            <section className="bg-[#1c2030] border border-[#3a7bd5] rounded-lg p-4 mt-6">
+              <div className="flex justify-between items-end border-b border-[#3a7bd5]/30 pb-2 mb-4">
+                <h2 className="text-xs font-bold text-[#3a7bd5] uppercase tracking-widest">Immutable Audit Ledger</h2>
+                <span className="text-[9px] bg-[#3a7bd5]/20 text-[#3a7bd5] px-2 py-1 rounded">CPIA COMPLIANT</span>
+              </div>
+              
+              <input type="text" value={auditFilter} onChange={e => setAuditFilter(e.target.value)} placeholder="Filter by Badge ID..." className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none uppercase mb-4" />
+              
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                {filteredLogs.length === 0 ? (
+                  <p className="text-[10px] text-[#7880a0] italic text-center">No logs found.</p>
+                ) : (
+                  filteredLogs.map(log => (
+                    <div key={log.id} className="bg-[#0c0e14] p-2 rounded border border-[#252a3a]">
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-[9px] text-[#e74c3c] font-bold">{log.action}</span>
+                        <span className="text-[8px] text-[#7880a0] font-mono">{new Date(log.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="text-[10px] text-[#dde1ec] mb-1">{log.details}</p>
+                      <div className="flex justify-between items-center mt-2 border-t border-[#252a3a] pt-1">
+                        <span className="text-[8px] text-[#7880a0]">User: <strong className="text-[#3a7bd5]">{log.user_id}</strong></span>
+                        <span className="text-[8px] text-[#7880a0] truncate w-24 text-right" title={log.target_id}>{log.target_id}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
         )}
 
-        {/* The Kill Switch */}
         <section className="bg-[#1c2030] border border-[#c0392b] rounded-lg p-4 mt-8">
           <h2 className="text-xs font-bold text-[#c0392b] uppercase tracking-widest mb-4 border-b border-[#c0392b]/30 pb-2">Emergency Protocols</h2>
           <p className="text-xs text-[#7880a0] mb-4">Engaging this protocol will permanently sanitise the device SQLite database, destroying all unexported intelligence.</p>

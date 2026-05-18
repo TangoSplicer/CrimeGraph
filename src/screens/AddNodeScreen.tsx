@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCaseStore } from '../stores/caseStore';
 
@@ -13,6 +13,18 @@ const nodeTypes = [
   { id: 'evidence', label: 'Evidence', icon: '💼', color: 'bg-[#1a8a4a]' },
 ];
 
+// 🚀 SMART METADATA TEMPLATES (UK English)
+const metadataTemplates: Record<string, string[]> = {
+  person: ['Alias', 'Date of Birth', 'National Insurance'],
+  vehicle: ['Registration (VRM)', 'Make/Model', 'Colour'],
+  phone: ['Phone Number', 'IMEI', 'Network'],
+  location: ['Address', 'Postcode', 'Grid Reference'],
+  digital_account: ['Platform', 'Username/Email'],
+  organisation: ['Company Name', 'Registration Number'],
+  event: ['Date/Time', 'Incident Type'],
+  evidence: ['Exhibit Number', 'Seized By', 'Seized From']
+};
+
 export const AddNodeScreen: React.FC = () => {
   const navigate = useNavigate();
   const addNode = useCaseStore((state) => state.addNode);
@@ -20,9 +32,13 @@ export const AddNodeScreen: React.FC = () => {
   const [selectedType, setSelectedType] = useState('person');
   const [label, setLabel] = useState('');
   const [confidence, setConfidence] = useState(3);
-  
-  // 🚀 NEW: Dynamic Metadata State
   const [attributes, setAttributes] = useState<{key: string, value: string}[]>([]);
+
+  // 🚀 Auto-populate fields based on POLE type
+  useEffect(() => {
+    const templateKeys = metadataTemplates[selectedType] || [];
+    setAttributes(templateKeys.map(key => ({ key, value: '' })));
+  }, [selectedType]);
 
   const handleAddAttribute = () => setAttributes([...attributes, { key: '', value: '' }]);
   const handleUpdateAttribute = (index: number, field: 'key'|'value', val: string) => {
@@ -36,12 +52,9 @@ export const AddNodeScreen: React.FC = () => {
     e.preventDefault();
     if (!label.trim()) return;
     
-    // 🚀 NEW: Convert array to Record object before saving
     const attrRecord: Record<string, string> = {};
     attributes.forEach(attr => {
-      if (attr.key.trim() && attr.value.trim()) {
-        attrRecord[attr.key.trim()] = attr.value.trim();
-      }
+      if (attr.key.trim() && attr.value.trim()) attrRecord[attr.key.trim()] = attr.value.trim();
     });
 
     await addNode(selectedType, label.trim(), confidence, attrRecord);
@@ -55,7 +68,7 @@ export const AddNodeScreen: React.FC = () => {
         <button onClick={() => navigate('/workspace')} className="text-[#7880a0] font-bold text-sm">CANCEL</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-24">
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-3 tracking-wider">Entity Type</label>
           <div className="grid grid-cols-2 gap-3">
@@ -81,19 +94,18 @@ export const AddNodeScreen: React.FC = () => {
           <input type="range" min="1" max="5" value={confidence} onChange={(e) => setConfidence(parseInt(e.target.value))} className="w-full accent-[#3a7bd5]" />
         </section>
 
-        {/* 🚀 NEW: Dynamic Metadata UI */}
         <section className="border-t border-[#252a3a] pt-6">
           <div className="flex justify-between items-center mb-4">
-            <label className="text-xs font-bold text-[#7880a0] uppercase tracking-wider">Additional Metadata</label>
+            <label className="text-xs font-bold text-[#7880a0] uppercase tracking-wider">Entity Metadata</label>
             <button onClick={handleAddAttribute} type="button" className="text-xs font-bold text-[#3a7bd5] hover:text-[#4a8be5]">+ ADD FIELD</button>
           </div>
           
           <div className="space-y-3">
-            {attributes.length === 0 && <p className="text-xs text-[#7880a0] italic">No custom fields added.</p>}
+            {attributes.length === 0 && <p className="text-xs text-[#7880a0] italic">No fields.</p>}
             {attributes.map((attr, index) => (
               <div key={index} className="flex space-x-2 items-center">
                 <input type="text" placeholder="Key (e.g. Alias)" value={attr.key} onChange={(e) => handleUpdateAttribute(index, 'key', e.target.value)} className="w-1/3 bg-[#14171f] border border-[#252a3a] rounded p-2 text-xs text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" />
-                <input type="text" placeholder="Value (e.g. 'Ghost')" value={attr.value} onChange={(e) => handleUpdateAttribute(index, 'value', e.target.value)} className="w-flex-1 flex-1 bg-[#14171f] border border-[#252a3a] rounded p-2 text-xs text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" />
+                <input type="text" placeholder="Value..." value={attr.value} onChange={(e) => handleUpdateAttribute(index, 'value', e.target.value)} className="flex-1 bg-[#14171f] border border-[#252a3a] rounded p-2 text-xs text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" />
                 <button onClick={() => handleRemoveAttribute(index)} type="button" className="text-[#c0392b] font-bold px-2 text-xl">&times;</button>
               </div>
             ))}
@@ -101,7 +113,7 @@ export const AddNodeScreen: React.FC = () => {
         </section>
       </div>
 
-      <div className="p-4 bg-[#14171f] border-t border-[#252a3a] pb-safe">
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-[#14171f] border-t border-[#252a3a] pb-safe z-50">
         <button onClick={handleSubmit} disabled={!label.trim()} className="w-full py-4 bg-[#3a7bd5] hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] text-white font-bold rounded text-lg transition-colors shadow-[0_0_15px_rgba(58,123,213,0.3)] disabled:shadow-none">
           Deploy Node
         </button>

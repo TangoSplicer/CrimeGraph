@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { NativeBiometric } from 'capacitor-native-biometric';
 
 const ShieldIcon = ({ className }: { className: string }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -8,38 +9,45 @@ const ShieldIcon = ({ className }: { className: string }) => (
 );
 
 export const AuthScreen: React.FC = () => {
-  const { isFirstBoot, setupMasterAdmin, login, adminLogin } = useAuthStore();
+  const { isFirstBoot, setupMasterAdmin, login, adminLogin, biometricLogin } = useAuthStore();
   const [badge, setBadge] = useState('');
   const [pin, setPin] = useState('');
   const [adminPass, setAdminPass] = useState('');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'standard' | 'admin'>('standard');
   const [isLoading, setIsLoading] = useState(false);
-  
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // 🚀 REINSTATED BIOMETRICS
+  useEffect(() => {
+    const triggerBiometrics = async () => {
+      if (isFirstBoot || mode === 'admin') return;
+      try {
+        const available = await NativeBiometric.isAvailable();
+        if (available.isAvailable) {
+          await NativeBiometric.verifyIdentity({ reason: "Authenticate to access CrimeGraph", title: "Operator Login" });
+          const success = await biometricLogin();
+          if (!success) setError('Biometric verified, but no active operator profile found. Use PIN.');
+        }
+      } catch (err) {
+        // Biometric failed or cancelled, fallback silently to PIN pad
+      }
+    };
+    triggerBiometrics();
+  }, [isFirstBoot, mode, biometricLogin]);
 
   const handlePressStart = () => {
     pressTimer.current = setTimeout(() => {
       if(navigator.vibrate) navigator.vibrate(50);
-      setMode('admin');
-      setError('');
-      // Wipe standard inputs when switching to admin just in case
-      setBadge('');
-      setPin('');
+      setMode('admin'); setError(''); setBadge(''); setPin('');
     }, 3000);
   };
-
-  const handlePressEnd = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-  };
+  const handlePressEnd = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
 
   const handleFirstBoot = async () => {
     if (adminPass.length < 8) return setError('Master password must be 8+ characters.');
     setIsLoading(true); setError('');
-    try { 
-      await setupMasterAdmin(adminPass); 
-      setAdminPass(''); // 🚀 STRICT WIPE: Erase password from React memory instantly
-    } 
+    try { await setupMasterAdmin(adminPass); setAdminPass(''); } 
     catch (err: any) { setError(`SYS ERROR: ${err.message}`); } 
     finally { setIsLoading(false); }
   };
@@ -50,18 +58,10 @@ export const AuthScreen: React.FC = () => {
     try {
       if (mode === 'admin') {
         const success = await adminLogin(adminPass);
-        if (success) {
-          setAdminPass(''); // 🚀 STRICT WIPE
-        } else {
-          setError('Unauthorised Access.');
-        }
+        if (success) setAdminPass(''); else setError('Unauthorised Access.');
       } else {
         const success = await login(badge, pin);
-        if (success) {
-          setBadge(''); setPin(''); // 🚀 STRICT WIPE
-        } else {
-          setError('Invalid Badge or PIN.');
-        }
+        if (success) { setBadge(''); setPin(''); } else setError('Invalid Badge or PIN.');
       }
     } catch (err: any) { setError(`SYS ERROR: ${err.message}`); } 
     finally { setIsLoading(false); }
@@ -82,22 +82,12 @@ export const AuthScreen: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec] relative pt-safe">
-      <div 
-        className="mb-8 p-4 cursor-pointer select-none" 
-        onTouchStart={handlePressStart} 
-        onTouchEnd={handlePressEnd} 
-        onTouchCancel={handlePressEnd}
-        onMouseDown={handlePressStart}
-        onMouseUp={handlePressEnd}
-        onMouseLeave={handlePressEnd}
-      >
+      <div className="mb-8 p-4 cursor-pointer select-none" onTouchStart={handlePressStart} onTouchEnd={handlePressEnd} onTouchCancel={handlePressEnd} onMouseDown={handlePressStart} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}>
         <ShieldIcon className={`w-20 h-20 transition-colors duration-1000 ${mode === 'admin' ? 'text-[#e74c3c]' : 'text-[#3a7bd5]'}`} />
       </div>
-
       <h1 className="text-2xl font-bold tracking-widest mb-8 uppercase text-center">
         {mode === 'admin' ? <span className="text-[#e74c3c]">COMMAND DECK</span> : 'CRIMEGRAPH'}
       </h1>
-
       <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
         {mode === 'standard' ? (
           <>

@@ -12,6 +12,7 @@ interface AuthState {
   initializeAuth: () => Promise<void>;
   setupMasterAdmin: (password: string) => Promise<void>;
   login: (badge: string, pin: string) => Promise<boolean>;
+  biometricLogin: () => Promise<boolean>;
   adminLogin: (password: string) => Promise<boolean>;
   addAnalyst: (badge: string, name: string, pin: string) => Promise<void>;
   logout: () => void;
@@ -26,7 +27,6 @@ const hashSecret = async (secret: string) => {
       return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     }
   } catch (e) {}
-  
   let hash = 0;
   for (let i = 0; i < secret.length; i++) {
     const char = secret.charCodeAt(i);
@@ -49,9 +49,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const db = await getDb();
       try { await db.query('SELECT badge FROM users LIMIT 1'); } 
       catch (e) { await db.run('DROP TABLE IF EXISTS users'); }
-
       await db.run('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE, name TEXT, hash TEXT, role TEXT, created_at TEXT)');
-      
       const res = await db.query('SELECT COUNT(*) as count FROM users');
       set({ isFirstBoot: (res.values?.[0]?.count || 0) === 0, isAppReady: true });
     } catch (e) { set({ isAppReady: true }); }
@@ -72,6 +70,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       const db = await getDb();
       const inputHash = await hashSecret(pin);
       const res = await db.query('SELECT * FROM users WHERE badge = ? AND hash = ? AND role = ?', [badge.toUpperCase(), inputHash, 'analyst']);
+      if (res.values && res.values.length > 0) {
+        localStorage.setItem('crimegraph_last_user', badge.toUpperCase());
+        set({ currentUser: res.values[0] as User });
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  },
+
+  biometricLogin: async () => {
+    try {
+      const lastBadge = localStorage.getItem('crimegraph_last_user');
+      if (!lastBadge) return false;
+      const db = await getDb();
+      const res = await db.query('SELECT * FROM users WHERE badge = ? AND role = ?', [lastBadge, 'analyst']);
       if (res.values && res.values.length > 0) {
         set({ currentUser: res.values[0] as User });
         return true;

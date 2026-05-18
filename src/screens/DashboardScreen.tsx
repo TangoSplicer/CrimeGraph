@@ -1,113 +1,147 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCaseStore } from '../stores/caseStore';
-import { useAuthStore } from '../stores/authStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const DashboardScreen: React.FC = () => {
-  const { cases, loadCases, setActiveCase, archiveCase, restoreCase, importCase } = useCaseStore();
-  const { setIntentionalBackground } = useAuthStore();
   const navigate = useNavigate();
-  const [view, setView] = useState<'active' | 'archived'>('active');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase } = useCaseStore();
+  
+  const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
+  
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newRef, setNewRef] = useState('');
+  const [newClass, setNewClass] = useState('OFFICIAL');
 
   useEffect(() => {
     loadCases();
   }, [loadCases]);
 
-  const handleCaseSelect = (caseId: string) => {
-    setActiveCase(caseId);
-    navigate('/graph');
-  };
+  const filteredCases = cases.filter(c => c.status === activeTab);
 
-  const handleArchiveToggle = (e: React.MouseEvent, caseId: string, currentStatus: string) => {
-    e.stopPropagation();
-    if (currentStatus === 'archived') {
-      restoreCase(caseId);
-    } else {
-      if (window.confirm('Archive this operation? It will be moved to the archive tab.')) archiveCase(caseId);
-    }
-  };
-
-  const handleImportClick = () => {
-    setIntentionalBackground(true);
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleCreateCase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim() || !newRef.trim()) return;
     
-    // 🚀 FIXED: Removed the fileName.endsWith check. 
-    // We now rely entirely on the crypto engine to validate the file contents.
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const content = event.target?.result as string;
-        await importCase(content);
-        alert('Intelligence package imported successfully!');
-      } catch(err) {
-        alert('Failed to import file. Ensure it is a valid encrypted CrimeGraph package and the password is correct.');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; 
+    await addCase(newTitle, newRef, 'operation', newClass);
+    setIsModalOpen(false);
+    setNewTitle('');
+    setNewRef('');
+    setActiveTab('active');
   };
 
-  const displayedCases = cases.filter(c => view === 'active' ? c.status !== 'archived' : c.status === 'archived');
-  const getClassificationColor = (c: string) => {
-    switch(c) {
-      case 'SECRET': return 'bg-[#3d0000] text-[#e74c3c] border-[#e74c3c]';
-      case 'OFFICIAL-SENSITIVE': return 'bg-[#3d2a00] text-[#f39c12] border-[#f39c12]';
-      default: return 'bg-[#252a3a] text-[#dde1ec] border-[#454d66]';
-    }
+  const handleOpenCase = (id: string) => {
+    setActiveCase(id);
+    navigate('/workspace');
+  };
+
+  const handleImport = async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.enc';
+    input.onchange = async (e: any) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const text = event.target?.result;
+        if (typeof text === 'string') {
+          try {
+            await importCase(text);
+          } catch (err) {
+            alert("Import failed. Incorrect password or corrupted package.");
+          }
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
   };
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#0c0e14]">
-      <div className="px-4 py-4 bg-[#14171f] border-b border-[#252a3a] pt-safe flex justify-between items-center">
+    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe relative">
+      
+      {/* HEADER */}
+      <div className="p-4 bg-[#14171f] border-b border-[#252a3a] flex justify-between items-center z-10 shrink-0">
         <div>
-          <h1 className="text-xl font-mono text-[#dde1ec]">Operations</h1>
-          <p className="text-[#7880a0] text-xs mt-1">Select a database to load</p>
+          <h1 className="text-xl font-bold tracking-widest text-white uppercase">Operations</h1>
+          <p className="text-xs text-[#7880a0]">Select a database to load</p>
         </div>
         <div className="flex space-x-2">
-          <input type="file" accept="*/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-          <button onClick={handleImportClick} className="bg-[#1c2030] text-[#dde1ec] border border-[#454d66] text-xs font-bold px-3 py-2 rounded shadow-md hover:bg-[#252a3a]">
-            IMPORT
+          <button onClick={handleImport} className="px-3 py-2 bg-[#252a3a] text-[#dde1ec] text-xs font-bold rounded uppercase hover:bg-[#3a415c]">
+            Import
           </button>
-          <button onClick={() => navigate('/new-case')} className="bg-[#3a7bd5] text-white text-xs font-bold px-3 py-2 rounded shadow-md hover:bg-[#4a8be5]">
-            + NEW
+          <button onClick={() => setIsModalOpen(true)} className="px-3 py-2 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase shadow-[0_0_10px_rgba(58,123,213,0.3)] hover:bg-[#4a8be5]">
+            + New
           </button>
         </div>
       </div>
-      <div className="flex w-full bg-[#14171f] border-b border-[#252a3a]">
-        <button className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider ${view === 'active' ? 'text-[#3a7bd5] border-b-2 border-[#3a7bd5]' : 'text-[#7880a0]'}`} onClick={() => setView('active')}>Active</button>
-        <button className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider ${view === 'archived' ? 'text-[#3a7bd5] border-b-2 border-[#3a7bd5]' : 'text-[#7880a0]'}`} onClick={() => setView('archived')}>Archived</button>
+
+      {/* TABS */}
+      <div className="flex border-b border-[#252a3a] bg-[#14171f] shrink-0">
+        <button onClick={() => setActiveTab('active')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-colors ${activeTab === 'active' ? 'text-[#3a7bd5] border-b-2 border-[#3a7bd5]' : 'text-[#7880a0] hover:text-[#dde1ec]'}`}>Active</button>
+        <button onClick={() => setActiveTab('archived')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-colors ${activeTab === 'archived' ? 'text-[#e74c3c] border-b-2 border-[#e74c3c]' : 'text-[#7880a0] hover:text-[#dde1ec]'}`}>Archived</button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {displayedCases.map((c) => (
-          <div key={c.id} onClick={() => handleCaseSelect(c.id)} className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4 active:bg-[#252a3a] transition-colors cursor-pointer relative">
-            <div className="flex justify-between items-start mb-2">
-              <span className="font-mono text-xs text-[#3a7bd5]">{c.reference_number}</span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${getClassificationColor(c.classification)}`}>{c.classification}</span>
-            </div>
-            <h2 className="text-lg font-bold text-[#dde1ec] mb-1 pr-16">{c.title}</h2>
-            <div className="flex justify-between items-center text-xs text-[#7880a0] mt-4">
-              <span className="uppercase">{c.case_type.replace('_', ' ')}</span>
-              <span className={`uppercase font-bold ${c.status === 'archived' ? 'text-[#7880a0]' : 'text-[#1d9a6c]'}`}>{c.status}</span>
-            </div>
-            <button onClick={(e) => handleArchiveToggle(e, c.id, c.status)} className="absolute top-12 right-4 px-3 py-1.5 bg-[#0f1219] border border-[#252a3a] text-[#7880a0] text-[10px] font-bold uppercase rounded hover:border-[#454d66] hover:text-[#dde1ec]">
-              {c.status === 'archived' ? 'Restore' : 'Archive'}
-            </button>
+
+      {/* CASE LIST (Fills remaining space, allows scrolling, padding bottom for fixed nav bar) */}
+      <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-4">
+        {filteredCases.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-40 text-[#7880a0]">
+            <p className="text-sm">No {activeTab} operations found.</p>
           </div>
-        ))}
-        {displayedCases.length === 0 && (
-          <div className="flex flex-col items-center justify-center mt-12 space-y-2">
-            <p className="text-[#7880a0] text-sm">{view === 'active' ? 'No active operations found.' : 'No archived operations.'}</p>
-          </div>
+        ) : (
+          filteredCases.map((c) => (
+            <div key={c.id} className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4 flex flex-col cursor-pointer hover:border-[#3a7bd5] transition-colors" onClick={() => handleOpenCase(c.id)}>
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-[10px] text-[#3a7bd5] font-mono tracking-widest">{c.reference_number}</span>
+                <span className="text-[9px] px-2 py-1 bg-[#252a3a] text-[#dde1ec] font-bold rounded uppercase">{c.classification}</span>
+              </div>
+              <h2 className="text-lg font-bold text-white mb-4 line-clamp-1">{c.title}</h2>
+              <div className="flex justify-between items-end border-t border-[#252a3a] pt-3">
+                <span className="text-[10px] text-[#7880a0] uppercase tracking-widest">{new Date(c.date_opened).toLocaleDateString()}</span>
+                {activeTab === 'active' ? (
+                  <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id); }} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline">Archive</button>
+                ) : null}
+              </div>
+            </div>
+          ))
         )}
       </div>
+
+      {/* NEW CASE MODAL */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-[#14171f] border border-[#252a3a] w-full max-w-sm rounded-lg p-6 shadow-2xl flex flex-col">
+            <h2 className="text-lg font-bold text-white mb-4 uppercase tracking-widest">New Operation</h2>
+            <form onSubmit={handleCreateCase} className="space-y-4">
+              <div>
+                <label className="block text-[10px] text-[#7880a0] font-bold uppercase mb-1">URN / Reference</label>
+                <input type="text" value={newRef} onChange={(e) => setNewRef(e.target.value)} required placeholder="e.g. OP-GHOST-01" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-sm text-white focus:border-[#3a7bd5] focus:outline-none font-mono uppercase" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-[#7880a0] font-bold uppercase mb-1">Operation Title</label>
+                <input type="text" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} required placeholder="Target Network Name" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-sm text-white focus:border-[#3a7bd5] focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-[#7880a0] font-bold uppercase mb-1">Classification</label>
+                <select value={newClass} onChange={(e) => setNewClass(e.target.value)} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-sm text-white focus:border-[#3a7bd5] focus:outline-none uppercase">
+                  <option value="OFFICIAL">Official</option>
+                  <option value="OFFICIAL-SENSITIVE">Official-Sensitive</option>
+                  <option value="SECRET">Secret</option>
+                </select>
+              </div>
+              <div className="flex space-x-3 pt-4">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase">Cancel</button>
+                <button type="submit" className="flex-1 py-3 bg-[#3a7bd5] text-white rounded text-xs font-bold uppercase">Deploy</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* BOTTOM NAVIGATION */}
       <BottomTabBar />
     </div>
   );

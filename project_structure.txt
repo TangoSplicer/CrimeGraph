@@ -1,0 +1,106 @@
+.
+├── assets
+│   ├── icon.png
+│   └── splash.png
+├── capacitor.config.ts
+├── docs
+│   ├── CrimeGraph_SOP_v1.1_UK.pdf
+│   └── CrimeGraph_TechSpec_v1.1_UK.pdf
+├── index.html
+├── package-lock.json
+├── package.json
+├── postcss.config.cjs
+├── project_structure.txt
+├── public
+│   └── fonts
+├── resources
+│   └── icon.png
+├── setup_scripts
+│   ├── fix_app_lifecycle.sh
+│   ├── fix_app_unused_vars.sh
+│   ├── fix_biometrics.sh
+│   ├── fix_biometrics_type.sh
+│   ├── fix_cap_cli.sh
+│   ├── fix_casestore_restoration.sh
+│   ├── fix_crypto_types.sh
+│   ├── fix_dashboard_syntax.sh
+│   ├── fix_db_error_mask.sh
+│   ├── fix_deps.sh
+│   ├── fix_drive_import.sh
+│   ├── fix_export_filesystem.sh
+│   ├── fix_export_type.sh
+│   ├── fix_graph_types.sh
+│   ├── fix_import_picker.sh
+│   ├── fix_kill_switch.sh
+│   ├── fix_operation_creation.sh
+│   ├── fix_phase4_types.sh
+│   ├── fix_phase5_alignment.sh
+│   ├── fix_typescript.sh
+│   ├── fix_ui_final.sh
+│   ├── fix_ui_styling.sh
+│   ├── fix_workspace_fab.sh
+│   ├── fix_workspace_ux.sh
+│   ├── force_install.sh
+│   ├── force_node_22.sh
+│   ├── force_v6_npx.sh
+│   ├── make_confidence_dynamic.sh
+│   ├── patch_ci_pipeline.sh
+│   ├── patch_missing_files.sh
+│   ├── patch_node_version.sh
+│   ├── patch_plugin_import.sh
+│   ├── patch_react_core.sh
+│   ├── setup_case_archiving.sh
+│   ├── setup_crimegraph_phase1.sh
+│   ├── setup_import_and_urn.sh
+│   ├── setup_multi_case.sh
+│   ├── setup_phase10_security.sh
+│   ├── setup_phase11_admin.sh
+│   ├── setup_phase12_edges.sh
+│   ├── setup_phase13_metadata.sh
+│   ├── setup_phase14_filters.sh
+│   ├── setup_phase15_production.sh
+│   ├── setup_phase1_auth.sh
+│   ├── setup_phase2_dashboard.sh
+│   ├── setup_phase3_graph.sh
+│   ├── setup_phase4_add_node.sh
+│   ├── setup_phase5_interactions.sh
+│   ├── setup_phase6_sqlite.sh
+│   ├── setup_phase7_and_8.sh
+│   └── setup_phase9_audit.sh
+├── src
+│   ├── App.tsx
+│   ├── capacitor
+│   │   ├── biometrics.ts
+│   │   ├── crypto.ts
+│   │   ├── db.ts
+│   │   └── schema.sql
+│   ├── components
+│   │   ├── cases
+│   │   ├── graph
+│   │   │   └── GraphCanvas.tsx
+│   │   ├── layout
+│   │   │   └── BottomTabBar.tsx
+│   │   └── shared
+│   │       └── BottomSheet.tsx
+│   ├── index.css
+│   ├── main.tsx
+│   ├── screens
+│   │   ├── AddEntityScreen.tsx
+│   │   ├── AddNodeScreen.tsx
+│   │   ├── AuthScreen.tsx
+│   │   ├── CreateCaseScreen.tsx
+│   │   ├── DashboardScreen.tsx
+│   │   ├── GraphWorkspaceScreen.tsx
+│   │   ├── SettingsScreen.tsx
+│   │   └── TimelineScreen.tsx
+│   ├── stores
+│   │   ├── authStore.ts
+│   │   └── caseStore.ts
+│   ├── utils
+│   └── vite-env.d.ts
+├── tailwind.config.cjs
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts
+
+17 directories, 87 files

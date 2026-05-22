@@ -8,8 +8,9 @@ export const MeshNetwork = {
     try {
       await BleClient.initialize({ androidNeverForLocation: true });
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('BLE Initialization failed:', error);
+      alert(`Hardware Error: ${error.message || 'Radio initialization blocked by OS'}`);
       return false;
     }
   },
@@ -26,8 +27,9 @@ export const MeshNetwork = {
           });
         }
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to initiate scan:', error);
+      alert(`Scan Error: ${error.message || 'Unable to access frequencies'}`);
     }
   },
 
@@ -37,15 +39,10 @@ export const MeshNetwork = {
     } catch (error) {}
   },
 
-  /**
-   * Connects to a peer device and writes the encrypted delta payload.
-   */
   transmitEncryptedPayload: async (deviceId: string, encryptedBase64: string): Promise<boolean> => {
     try {
       await BleClient.connect(deviceId);
       
-      // In production, payloads exceeding MTU size (approx 512 bytes) must be chunked here.
-      // We are writing the text wrapper for the initial handshake.
       await BleClient.write(
         deviceId,
         CRIMEGRAPH_SERVICE_UUID,
@@ -54,7 +51,6 @@ export const MeshNetwork = {
       );
 
       await BleClient.disconnect(deviceId);
-      console.log('Encrypted package securely transmitted and connection severed.');
       return true;
     } catch (error) {
       console.error('Failed to transmit payload:', error);

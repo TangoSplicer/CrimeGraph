@@ -1,61 +1,122 @@
-import { BleClient, textToDataView } from '@capacitor-community/bluetooth-le';
+declare global {
+  interface Window {
+    bluetoothle: any;
+  }
+}
 
 const CRIMEGRAPH_SERVICE_UUID = '0000FF01-0000-1000-8000-00805F9B34FB';
 const AUDIT_CHARACTERISTIC_UUID = '0000FF02-0000-1000-8000-00805F9B34FB';
 
 export const MeshNetwork = {
   initializeHardware: async (): Promise<boolean> => {
-    try {
-      await BleClient.initialize({ androidNeverForLocation: true });
-      return true;
-    } catch (error: any) {
-      console.error('BLE Initialization failed:', error);
-      alert(`Hardware Error: ${error.message || 'Radio initialization blocked by OS'}`);
-      return false;
-    }
+    return new Promise((resolve) => {
+      if (!window.bluetoothle) {
+        alert("Radio drivers not loaded. Ensure app is compiled natively.");
+        return resolve(false);
+      }
+
+      // Initialize Central (Scanner)
+      window.bluetoothle.initialize((result: any) => {
+        if (result.status === 'enabled') {
+          
+          // Initialize Peripheral (Broadcaster)
+          window.bluetoothle.initializePeripheral((pResult: any) => {
+            if (pResult.status === 'enabled') {
+              
+              // Define the Mesh Service
+              window.bluetoothle.addService({
+                service: CRIMEGRAPH_SERVICE_UUID,
+                characteristics: [{
+                  uuid: AUDIT_CHARACTERISTIC_UUID,
+                  permissions: { read: true, write: true },
+                  properties: { read: true, writeWithoutResponse: true, write: true }
+                }]
+              }, () => {
+                
+                // Begin Advertising Presence
+                window.bluetoothle.startAdvertising({
+                  services: [CRIMEGRAPH_SERVICE_UUID],
+                  service: CRIMEGRAPH_SERVICE_UUID,
+                  name: "CrimeGraph_Node"
+                }, () => {
+                  console.log("Hardware Initialized & Broadcasting Presence");
+                  resolve(true);
+                }, (err: any) => {
+                  console.error("Advertising failed:", err);
+                  resolve(false);
+                });
+
+              }, (err: any) => {
+                console.error("Service creation failed:", err);
+                resolve(false);
+              });
+
+            } else {
+              resolve(false);
+            }
+          }, (error: any) => {
+            console.error("Peripheral init failed:", error);
+            resolve(false);
+          }, { request: true });
+
+        } else {
+          resolve(false);
+        }
+      }, { request: true, statusReceiver: false });
+    });
   },
 
   startTacticalScan: async (onDeviceDiscovered: (device: any) => void): Promise<void> => {
-    try {
-      await BleClient.requestLEScan(
-        { services: [CRIMEGRAPH_SERVICE_UUID] },
-        (result) => {
-          onDeviceDiscovered({
-            deviceId: result.device.deviceId,
-            name: result.device.name || 'Unknown Device',
-            rssi: result.rssi,
-          });
-        }
-      );
-    } catch (error: any) {
-      console.error('Failed to initiate scan:', error);
+    if (!window.bluetoothle) return;
+    
+    window.bluetoothle.startScan({
+      services: [CRIMEGRAPH_SERVICE_UUID]
+    }, (result: any) => {
+      if (result.status === 'scanResult') {
+        onDeviceDiscovered({
+          deviceId: result.address,
+          name: result.name || 'Operator Node',
+          rssi: result.rssi,
+        });
+      }
+    }, (error: any) => {
+      console.error('Scan Error:', error);
       alert(`Scan Error: ${error.message || 'Unable to access frequencies'}`);
-    }
+    });
   },
 
   stopTacticalScan: async (): Promise<void> => {
-    try {
-      await BleClient.stopLEScan();
-    } catch (error) {}
+    return new Promise((resolve) => {
+      if (!window.bluetoothle) return resolve();
+      window.bluetoothle.stopScan(() => resolve(), () => resolve());
+    });
   },
 
   transmitEncryptedPayload: async (deviceId: string, encryptedBase64: string): Promise<boolean> => {
-    try {
-      await BleClient.connect(deviceId);
-      
-      await BleClient.write(
-        deviceId,
-        CRIMEGRAPH_SERVICE_UUID,
-        AUDIT_CHARACTERISTIC_UUID,
-        textToDataView(encryptedBase64)
-      );
+    return new Promise((resolve) => {
+      if (!window.bluetoothle) return resolve(false);
 
-      await BleClient.disconnect(deviceId);
-      return true;
-    } catch (error) {
-      console.error('Failed to transmit payload:', error);
-      try { await BleClient.disconnect(deviceId); } catch (e) {}
-      return false;
-    }
+      // Connect to discovered peer
+      window.bluetoothle.connect({ address: deviceId }, (result: any) => {
+        if (result.status === 'connected') {
+          
+          window.bluetoothle.discover({ address: deviceId }, () => {
+            // Transmit payload
+            window.bluetoothle.write({
+              address: deviceId,
+              service: CRIMEGRAPH_SERVICE_UUID,
+              characteristic: AUDIT_CHARACTERISTIC_UUID,
+              value: encryptedBase64 // cordova-plugin-bluetoothle expects base64 strings natively
+            }, () => {
+              // Disconnect and wipe signature
+              window.bluetoothle.disconnect({ address: deviceId }, () => resolve(true));
+            }, () => {
+              window.bluetoothle.disconnect({ address: deviceId }, () => resolve(false));
+            });
+          }, () => resolve(false));
+          
+        }
+      }, () => resolve(false));
+    });
   }
 };

@@ -78,6 +78,7 @@ describe('protected database bootstrap', () => {
     expect(third).toBe(db);
     expect(mocks.getDeviceStorageSecret).toHaveBeenCalledTimes(1);
     expect(mocks.connection.setEncryptionSecret).toHaveBeenCalledWith(`${'A'.repeat(43)}=`);
+    expect(mocks.connection.createConnection).toHaveBeenCalledWith('crimegraph_db', true, 'secret', 1, false);
     expect(mocks.connection.createConnection).toHaveBeenCalledTimes(1);
     expect(db.open).toHaveBeenCalledTimes(1);
   });
@@ -96,8 +97,21 @@ describe('protected database bootstrap', () => {
     await expect(getDb()).resolves.toBe(freshDb);
 
     expect(mocks.connection.checkConnectionsConsistency).toHaveBeenCalledTimes(2);
-    expect(mocks.connection.createConnection).toHaveBeenCalledWith('crimegraph_db', true, 'encryption', 1, false);
+    expect(mocks.connection.createConnection).toHaveBeenCalledWith('crimegraph_db', true, 'secret', 1, false);
     expect(staleDb.open).toHaveBeenCalledTimes(1);
     expect(freshDb.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses conversion mode only for an existing plaintext database', async () => {
+    const db = makeDatabase();
+    mocks.connection.isDatabase.mockResolvedValue({ result: true });
+    mocks.connection.isDatabaseEncrypted.mockResolvedValue({ result: false });
+    mocks.connection.isConnection.mockResolvedValue({ result: false });
+    mocks.connection.createConnection.mockResolvedValue(db);
+    const { getDb } = await import('./db');
+
+    await expect(getDb()).resolves.toBe(db);
+
+    expect(mocks.connection.createConnection).toHaveBeenCalledWith('crimegraph_db', true, 'encryption', 1, false);
   });
 });

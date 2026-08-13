@@ -28,7 +28,10 @@ const prepareDatabaseSecurity = async (): Promise<DatabaseSecurityMode> => {
   }
 
   const databaseExists = await sqliteConnection.isDatabase(DATABASE_NAME);
-  if (!databaseExists.result) return { encrypted: true, mode: 'encryption' };
+  // `encryption` converts an existing plaintext `SQLite.db` file. A first-run
+  // database has no file to convert, so it must be created directly with the
+  // already stored device secret using `secret` mode.
+  if (!databaseExists.result) return { encrypted: true, mode: 'secret' };
   const isEncrypted = await sqliteConnection.isDatabaseEncrypted(DATABASE_NAME);
   return { encrypted: true, mode: isEncrypted.result ? 'secret' : 'encryption' };
 };

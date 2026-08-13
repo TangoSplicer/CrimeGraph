@@ -4,9 +4,12 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
     "generate-assets": "capacitor-assets generate",
-    "sync": "cap sync"
+    "sync": "cap sync",
+    "sync:android": "cap sync android",
+    "build:android": "npm run build && npm run sync:android && cd android && ./gradlew assembleDebug --no-daemon"
   },
   "dependencies": {
     "@aparajita/capacitor-biometric-auth": "^8.0.2",
@@ -22,12 +25,11 @@
     "@capacitor/preferences": "^6.0.0",
     "@capacitor/share": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
-    "capacitor-native-biometric": "^4.2.2",
     "cordova-plugin-bluetoothle": "^6.7.4",
     "cytoscape": "^3.28.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "react-router-dom": "^6.22.0",
+    "react-router-dom": "^7.18.2",
     "vis-timeline": "^7.7.0",
     "zustand": "^4.5.0"
   },
@@ -41,5 +43,9 @@
     "tailwindcss": "^3.4.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.0"
+  },
+  "overrides": {
+    "brace-expansion": "2.1.4",
+    "sql.js": "1.11.0"
   }
 }

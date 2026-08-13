@@ -6,17 +6,16 @@ import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, logout, addAnalyst } = useAuthStore();
-  const { wipeDatabase, auditLogs, loadAuditLogs } = useCaseStore();
+  const { wipeDatabase, auditLogs, auditVerification, loadAuditLogs } = useCaseStore();
   
   const { 
     isScanning, 
     isHardwareReady, 
-    isSyncing,
-    discoveredPeers, 
-    initializeMesh, 
-    startDiscovery, 
-    stopDiscovery,
-    initiateHandshake
+    discoveredPeers,
+    transferStatus,
+    initializeMesh,
+    startDiscovery,
+    stopDiscovery
   } = useSyncStore();
 
   const [newBadge, setNewBadge] = useState('');
@@ -74,7 +73,7 @@ export const SettingsScreen: React.FC = () => {
         {/* TACTICAL MESH NETWORK (DARK SYNC) - AVAILABLE TO ALL OPERATORS */}
         <section className="bg-[#1c2030] border border-[#2ecc71] rounded-lg p-4">
           <div className="flex justify-between items-end border-b border-[#2ecc71]/30 pb-2 mb-4">
-            <h2 className="text-xs font-bold text-[#2ecc71] uppercase tracking-widest">Tactical Mesh (P2P)</h2>
+            <h2 className="text-xs font-bold text-[#2ecc71] uppercase tracking-widest">Tactical Mesh Discovery</h2>
             <span className={`text-[9px] px-2 py-1 rounded ${isHardwareReady ? 'bg-[#2ecc71]/20 text-[#2ecc71]' : 'bg-[#7880a0]/20 text-[#7880a0]'}`}>
               {isHardwareReady ? 'HARDWARE ONLINE' : 'OFFLINE'}
             </span>
@@ -107,27 +106,15 @@ export const SettingsScreen: React.FC = () => {
                         <span className="text-xs font-bold text-[#dde1ec]">{peer.name}</span>
                         <span className="text-[9px] text-[#7880a0] font-mono">{peer.deviceId}</span>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-[9px] text-[#2ecc71]">RSSI: {peer.rssi}</span>
-                        <button 
-                          onClick={() => initiateHandshake(peer.deviceId)}
-                          disabled={isSyncing === peer.deviceId}
-                          className={`px-3 py-1 rounded text-[9px] font-bold uppercase transition-colors ${
-                            isSyncing === peer.deviceId 
-                              ? 'bg-[#f39c12] text-[#0c0e14]' 
-                              : 'bg-[#3a7bd5] text-white hover:bg-[#295ba3]'
-                          }`}
-                        >
-                          {isSyncing === peer.deviceId ? 'SYNCING...' : 'HANDSHAKE'}
-                        </button>
-                      </div>
+                      <span className="text-[9px] text-[#2ecc71]">RSSI: {peer.rssi}</span>
                     </div>
                   ))}
                 </div>
               )}
               {isScanning && discoveredPeers.length === 0 && (
-                <p className="text-[10px] text-[#2ecc71] italic text-center animate-pulse mt-2">Scanning frequencies for active nodes...</p>
+                <p className="text-[10px] text-[#2ecc71] italic text-center animate-pulse mt-2">Scanning for nearby radio devices. No intelligence is transferred.</p>
               )}
+              {transferStatus && <p className="text-[10px] text-[#7880a0] mt-3 leading-relaxed">{transferStatus}</p>}
             </div>
           )}
         </section>
@@ -151,9 +138,10 @@ export const SettingsScreen: React.FC = () => {
             <section className="bg-[#1c2030] border border-[#3a7bd5] rounded-lg p-4">
               <div className="flex justify-between items-end border-b border-[#3a7bd5]/30 pb-2 mb-4">
                 <h2 className="text-xs font-bold text-[#3a7bd5] uppercase tracking-widest">Immutable Audit Ledger</h2>
-                <span className="text-[9px] bg-[#3a7bd5]/20 text-[#3a7bd5] px-2 py-1 rounded">CPIA COMPLIANT</span>
+                <span className={`text-[9px] px-2 py-1 rounded ${auditVerification?.valid ? 'bg-[#2ecc71]/20 text-[#2ecc71]' : 'bg-[#f39c12]/20 text-[#f39c12]'}`}>{auditVerification?.valid ? 'CHAIN VERIFIED' : 'VERIFYING'}</span>
               </div>
 
+              <p className={`text-[10px] mb-3 ${auditVerification?.valid ? 'text-[#2ecc71]' : 'text-[#f39c12]'}`}>{auditVerification?.valid ? `${auditVerification.verifiedEntries} hash-linked entries verified${auditVerification.legacyEntries ? `; ${auditVerification.legacyEntries} legacy entries retained` : ''}.` : 'The audit chain has not yet been verified.'}</p>
               <input type="text" value={auditFilter} onChange={e => setAuditFilter(e.target.value)} placeholder="Filter by Badge ID..." className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none uppercase mb-4" />
 
               <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
@@ -181,7 +169,7 @@ export const SettingsScreen: React.FC = () => {
 
         <section className="bg-[#1c2030] border border-[#c0392b] rounded-lg p-4 mt-8">
           <h2 className="text-xs font-bold text-[#c0392b] uppercase tracking-widest mb-4 border-b border-[#c0392b]/30 pb-2">Emergency Protocols</h2>
-          <p className="text-xs text-[#7880a0] mb-4">Engaging this protocol will permanently sanitise the device SQLite database, destroying all unexported intelligence.</p>
+          <p className="text-xs text-[#7880a0] mb-4">Engaging this protocol permanently sanitises local intelligence, audit history, and operator profiles. Only a fresh reset record remains.</p>
           <button onClick={handleWipe} className="w-full py-4 bg-[#c0392b] text-white rounded text-sm font-bold uppercase tracking-widest shadow-[0_0_15px_rgba(192,57,43,0.4)] hover:bg-[#a93226]">WIPE ALL DATA</button>
         </section>
       </div>

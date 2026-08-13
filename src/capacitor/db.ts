@@ -1,8 +1,28 @@
+import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, CapacitorSQLitePlugin } from '@capacitor-community/sqlite';
+import { defineCustomElements } from 'jeep-sqlite/loader';
 
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
 let dbInstance: any = null;
+let webStoreReady: Promise<void> | null = null;
+
+const initialiseWebStore = async (): Promise<void> => {
+  if (Capacitor.getPlatform() !== 'web') return;
+  if (!webStoreReady) {
+    webStoreReady = (async () => {
+      defineCustomElements(window);
+      if (!document.querySelector('jeep-sqlite')) {
+        const element = document.createElement('jeep-sqlite');
+        element.setAttribute('autoSave', 'true');
+        document.body.appendChild(element);
+      }
+      await customElements.whenDefined('jeep-sqlite');
+      await sqliteConnection.initWebStore();
+    })();
+  }
+  await webStoreReady;
+};
 
 export async function getDb() {
   if (dbInstance) return dbInstance;
@@ -11,6 +31,7 @@ export async function getDb() {
 
 export async function initDatabase() {
   try {
+    await initialiseWebStore();
     const isConn = await sqliteConnection.isConnection('crimegraph_db', false);
     let db;
     if (isConn.result) {
@@ -21,22 +42,37 @@ export async function initDatabase() {
     await db.open();
 
     const createTables = `
-      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL, display_name TEXT NOT NULL, force_unit TEXT, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, is_active INTEGER DEFAULT 1);
+      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
-      CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT);
+      CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
       
       -- We ensure new installs get the attributes column
       CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, attributes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
     `;
     await db.execute(createTables);
     
-    // 🚀 PHASE 13: Live SQLite Migration
-    // We try to inject the column for existing users. If it already exists, SQLite will just harmlessly ignore it.
+    // Live migrations are intentionally additive so existing device-local intelligence remains readable.
+    for (const migration of [
+      'ALTER TABLE nodes ADD COLUMN attributes TEXT;',
+      'ALTER TABLE audit_logs ADD COLUMN previous_hash TEXT;',
+      'ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT;',
+      'ALTER TABLE users ADD COLUMN biometric_enabled INTEGER DEFAULT 0;',
+      'ALTER TABLE users ADD COLUMN last_login TEXT;',
+    ]) {
+      try {
+        await db.execute(migration);
+      } catch {
+        // The column already exists or belongs to a legacy schema; authentication performs its own safe check.
+      }
+    }
+
     try {
-       await db.execute('ALTER TABLE nodes ADD COLUMN attributes TEXT;');
-    } catch (e) {
-       // Column already exists, safe to continue
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
+    } catch (indexError) {
+      console.warn('Database index creation skipped.', indexError);
     }
 
     try {

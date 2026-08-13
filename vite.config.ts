@@ -5,7 +5,17 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   esbuild: {
-    // 🚀 PHASE 9: Security Hardening - strips all debug output from the final APK
+    // Strip debug output from the production application bundle.
     drop: ['console', 'debugger'],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          framework: ['react', 'react-dom', 'react-router-dom'],
+          graph: ['cytoscape'],
+        },
+      },
+    },
   },
 });

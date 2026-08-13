@@ -3,254 +3,414 @@ import { getDb } from '../capacitor/db';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
-import { encryptPackage, decryptPackage } from '../capacitor/crypto';
+import { decryptPackage, encryptPackage } from '../capacitor/crypto';
+import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
 
 export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; }
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; attributes?: Record<string, string>; }; }
-export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; }
+export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; previous_hash?: string | null; entry_hash?: string | null; }
 export interface IntelNote { id: string; case_id: string; content: string; linked_nodes: string[]; created_at: string; }
 
 interface CaseState {
-  cases: Case[]; activeCaseId: string | null; graphElements: GraphElement[]; auditLogs: AuditLog[]; notes: IntelNote[];
-  selectedNodeId: string | null; selectedEdgeId: string | null; connectingFromId: string | null; hiddenNodeTypes: string[];
-
-  loadCases: () => Promise<void>; setActiveCase: (id: string) => void;
+  cases: Case[];
+  activeCaseId: string | null;
+  graphElements: GraphElement[];
+  auditLogs: AuditLog[];
+  auditVerification: AuditVerificationResult | null;
+  notes: IntelNote[];
+  selectedNodeId: string | null;
+  selectedEdgeId: string | null;
+  connectingFromId: string | null;
+  hiddenNodeTypes: string[];
+  loadCases: () => Promise<void>;
+  setActiveCase: (id: string) => void;
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
-  archiveCase: (caseId: string) => Promise<void>; restoreCase: (caseId: string) => Promise<void>;
+  archiveCase: (caseId: string) => Promise<void>;
+  restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>) => Promise<void>;
-  updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>) => Promise<void>; // 🚀 NEW
+  updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
-  deleteNode: (nodeId: string) => Promise<void>; deleteEdge: (edgeId: string) => Promise<void>;
-  setSelectedNodeId: (id: string | null) => void; setSelectedEdgeId: (id: string | null) => void; setConnectingFromId: (id: string | null) => void;
-  exportActiveCase: () => Promise<void>; importCase: (encryptedData: string) => Promise<void>;
-  loadAuditLogs: () => Promise<void>; wipeDatabase: () => Promise<void>; toggleFilter: (nodeType: string) => void;
-  loadNotes: (caseId: string) => Promise<void>; addNote: (content: string, linkedNodeIds: string[]) => Promise<void>; deleteNote: (noteId: string) => Promise<void>;
+  deleteNode: (nodeId: string) => Promise<void>;
+  deleteEdge: (edgeId: string) => Promise<void>;
+  setSelectedNodeId: (id: string | null) => void;
+  setSelectedEdgeId: (id: string | null) => void;
+  setConnectingFromId: (id: string | null) => void;
+  exportActiveCase: () => Promise<void>;
+  importCase: (encryptedData: string) => Promise<void>;
+  loadAuditLogs: () => Promise<void>;
+  wipeDatabase: () => Promise<void>;
+  toggleFilter: (nodeType: string) => void;
+  loadNotes: (caseId: string) => Promise<void>;
+  addNote: (content: string, linkedNodeIds: string[]) => Promise<void>;
+  deleteNote: (noteId: string) => Promise<void>;
 }
 
+const ENTITY_TYPES = new Set(['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence']);
+const MAX_ATTRIBUTE_ENTRIES = 40;
+const MAX_ATTRIBUTE_KEY_LENGTH = 80;
+const MAX_ATTRIBUTE_VALUE_LENGTH = 500;
+const MAX_NOTE_LENGTH = 10000;
+const MAX_IMPORT_BASE64_LENGTH = 12 * 1024 * 1024;
+const MAX_IMPORT_NODES = 2000;
+const MAX_IMPORT_EDGES = 6000;
+const MAX_IMPORT_NOTES = 2000;
+
+const createId = (prefix: string): string => window.crypto?.randomUUID ? `${prefix}_${window.crypto.randomUUID()}` : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+const currentOperator = (): string => useAuthStore.getState().currentUser?.badge || 'SYSTEM_UNKNOWN';
+
 const logAudit = async (action: string, targetId: string, details: string) => {
-  try {
-    const db = await getDb();
-    const userId = useAuthStore.getState().currentUser?.badge || 'SYSTEM_UNKNOWN';
-    await db.run('INSERT INTO audit_logs (id, timestamp, user_id, action, target_id, details) VALUES (?, ?, ?, ?, ?, ?)', [`audit_${Date.now()}`, new Date().toISOString(), userId, action, targetId, details]);
-  } catch (e) {}
+  const db = await getDb();
+  return appendAuditEntry(db, action, targetId, details, currentOperator());
 };
 
 const ensureNotesTable = async () => {
   const db = await getDb();
-  await db.run('CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, case_id TEXT, content TEXT, linked_nodes TEXT, created_at TEXT)');
+  await db.run('CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, content TEXT NOT NULL, linked_nodes TEXT NOT NULL, created_at TEXT NOT NULL)');
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_notes_case_id ON notes(case_id);');
+};
+
+const normaliseAttributes = (attributes: Record<string, string> = {}): Record<string, string> => {
+  const entries = Object.entries(attributes)
+    .map(([key, value]) => [key.trim().slice(0, MAX_ATTRIBUTE_KEY_LENGTH), String(value).trim().slice(0, MAX_ATTRIBUTE_VALUE_LENGTH)] as const)
+    .filter(([key, value]) => Boolean(key && value))
+    .slice(0, MAX_ATTRIBUTE_ENTRIES);
+  return Object.fromEntries(entries);
+};
+
+const parseLinkedNodes = (rawValue: string | null | undefined): string[] => {
+  try {
+    const parsed = JSON.parse(rawValue || '[]');
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const readElementData = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object') return null;
+  const data = (value as { data?: unknown }).data;
+  return data && typeof data === 'object' ? data as Record<string, unknown> : null;
+};
+
+const validateImportedPackage = (candidate: unknown) => {
+  if (!candidate || typeof candidate !== 'object') throw new Error('Package is not a JSON object.');
+  const data = candidate as Record<string, unknown>;
+  const metadata = data.metadata;
+  if (!metadata || typeof metadata !== 'object') throw new Error('Package metadata is missing.');
+  const reference = String((metadata as Record<string, unknown>).reference || '').trim().slice(0, 80);
+  const title = String((metadata as Record<string, unknown>).title || '').trim().slice(0, 160);
+  const classification = String((metadata as Record<string, unknown>).classification || 'OFFICIAL').trim().slice(0, 40);
+  if (!reference || !title) throw new Error('Package metadata is incomplete.');
+
+  const nodes = Array.isArray(data.intelligence_nodes) ? data.intelligence_nodes : [];
+  const relationships = Array.isArray(data.relationships) ? data.relationships : [];
+  const notes = Array.isArray(data.notes) ? data.notes : [];
+  if (nodes.length > MAX_IMPORT_NODES || relationships.length > MAX_IMPORT_EDGES || notes.length > MAX_IMPORT_NOTES) {
+    throw new Error('Package exceeds the supported import size.');
+  }
+  return { reference, title, classification, nodes, relationships, notes };
+};
+
+const withTransaction = async <T>(db: any, operation: () => Promise<T>): Promise<T> => {
+  await db.execute('BEGIN IMMEDIATE;');
+  try {
+    const result = await operation();
+    await db.execute('COMMIT;');
+    return result;
+  } catch (error) {
+    try { await db.execute('ROLLBACK;'); } catch { /* Transaction was not opened or has already been closed. */ }
+    throw error;
+  }
 };
 
 export const useCaseStore = create<CaseState>((set, get) => ({
-  cases: [], activeCaseId: null, graphElements: [], auditLogs: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
-  
+  cases: [],
+  activeCaseId: null,
+  graphElements: [],
+  auditLogs: [],
+  auditVerification: null,
+  notes: [],
+  selectedNodeId: null,
+  selectedEdgeId: null,
+  connectingFromId: null,
+  hiddenNodeTypes: [],
+
   loadCases: async () => {
-    try {
-      const db = await getDb();
-      const res = await db.query('SELECT * FROM cases ORDER BY date_opened DESC');
-      set({ cases: res.values || [] });
-    } catch (e) {}
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM cases ORDER BY date_opened DESC');
+    set({ cases: response.values || [] });
   },
 
-  setActiveCase: (id) => { 
-    set({ activeCaseId: id, hiddenNodeTypes: [] }); 
-    get().loadGraphElements(id); 
-    get().loadNotes(id);
+  setActiveCase: (id) => {
+    set({ activeCaseId: id, hiddenNodeTypes: [], selectedNodeId: null, selectedEdgeId: null });
+    void get().loadGraphElements(id);
+    void get().loadNotes(id);
   },
 
   addCase: async (title, refNumber, caseType, classification) => {
-    const id = `case_${Date.now()}`; const now = new Date().toISOString();
+    const cleanTitle = title.trim().slice(0, 160);
+    const cleanReference = refNumber.trim().toUpperCase().slice(0, 80);
+    if (!cleanTitle || !cleanReference) throw new Error('Case title and reference are required.');
+    const id = createId('case');
+    const now = new Date().toISOString();
     const db = await getDb();
-    await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, refNumber, title, caseType, 'active', classification, now, now, now]);
-    await logAudit('CREATE_CASE', id, `Created ${refNumber}`);
-    get().loadCases();
+    await withTransaction(db, async () => {
+      await db.run(
+        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, cleanReference, cleanTitle, caseType.trim().slice(0, 60) || 'other', 'active', classification.trim().slice(0, 40) || 'OFFICIAL', now, now, now],
+      );
+      await appendAuditEntry(db, 'CREATE_CASE', id, `Created ${cleanReference}`, currentOperator());
+    });
+    await get().loadCases();
   },
 
   archiveCase: async (caseId) => {
     const db = await getDb();
-    await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
-    await logAudit('ARCHIVE_CASE', caseId, 'Archived');
-    get().loadCases();
+    await withTransaction(db, async () => {
+      await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
+      await appendAuditEntry(db, 'ARCHIVE_CASE', caseId, 'Archived case', currentOperator());
+    });
+    await get().loadCases();
   },
 
   restoreCase: async (caseId) => {
     const db = await getDb();
-    await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
-    await logAudit('RESTORE_CASE', caseId, 'Restored');
-    get().loadCases();
+    await withTransaction(db, async () => {
+      await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
+      await appendAuditEntry(db, 'RESTORE_CASE', caseId, 'Restored case', currentOperator());
+    });
+    await get().loadCases();
   },
 
   loadGraphElements: async (caseId) => {
-    try {
-      const db = await getDb();
-      const nodesRes = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
-      const edgesRes = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
-      const elements: GraphElement[] = [];
-      if (nodesRes.values) {
-        nodesRes.values.forEach((n: any) => {
-          let parsedAttr = {};
-          try { if (n.attributes) parsedAttr = JSON.parse(n.attributes); } catch(err){}
-          elements.push({ data: { id: n.id, label: n.label, type: n.type, confidence: n.confidence, created_at: n.created_at, attributes: parsedAttr } });
-        });
-      }
-      if (edgesRes.values) edgesRes.values.forEach((e: any) => elements.push({ data: { id: e.id, source: e.source, target: e.target, label: e.label, created_at: e.created_at } }));
-      set({ graphElements: elements });
-    } catch (e) {}
+    const db = await getDb();
+    const nodesResponse = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
+    const edgesResponse = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
+    const elements: GraphElement[] = [];
+    (nodesResponse.values || []).forEach((node: any) => {
+      let attributes: Record<string, string> = {};
+      try { attributes = normaliseAttributes(JSON.parse(node.attributes || '{}')); } catch { /* A malformed legacy attribute is safely ignored. */ }
+      elements.push({ data: { id: node.id, label: node.label, type: node.type, confidence: node.confidence, created_at: node.created_at, attributes } });
+    });
+    (edgesResponse.values || []).forEach((edge: any) => {
+      elements.push({ data: { id: edge.id, source: edge.source, target: edge.target, label: edge.label, created_at: edge.created_at } });
+    });
+    set({ graphElements: elements });
   },
 
   addNode: async (nodeType, label, confidence, attributes = {}) => {
     const { activeCaseId, graphElements } = get();
-    if (!activeCaseId) return;
-    const id = `node_${Date.now()}`; const now = new Date().toISOString();
+    const cleanLabel = label.trim().slice(0, 160);
+    if (!activeCaseId) throw new Error('Select a case before adding an entity.');
+    if (!ENTITY_TYPES.has(nodeType)) throw new Error('Unsupported entity type.');
+    if (!cleanLabel) throw new Error('Entity label is required.');
+    const id = createId('node');
+    const now = new Date().toISOString();
+    const cleanAttributes = normaliseAttributes(attributes);
     const db = await getDb();
-    const attrString = JSON.stringify(attributes);
-    await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)', [id, activeCaseId, label, nodeType, confidence, now, attrString]);
-    await logAudit('ADD_NODE', id, `Added ${nodeType}: ${label}`);
-    set({ graphElements: [...graphElements, { data: { id, label, type: nodeType, confidence, created_at: now, attributes } }] });
+    await withTransaction(db, async () => {
+      await db.run(
+        'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, activeCaseId, cleanLabel, nodeType, Math.max(1, Math.min(5, Math.round(confidence))), now, JSON.stringify(cleanAttributes)],
+      );
+      await appendAuditEntry(db, 'ADD_NODE', id, `Added ${nodeType}: ${cleanLabel}`, currentOperator());
+    });
+    set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, attributes: cleanAttributes } }] });
   },
 
-  // 🚀 NEW: Update Node Metadata
   updateNode: async (id, label, confidence, attributes) => {
-    const { graphElements } = get();
-    const attrString = JSON.stringify(attributes);
-    try {
-      const db = await getDb();
-      await db.run('UPDATE nodes SET label = ?, confidence = ?, attributes = ? WHERE id = ?', [label, confidence, attrString, id]);
-      await logAudit('UPDATE_NODE', id, `Modified metadata for: ${label}`);
-      set({
-        graphElements: graphElements.map(e => 
-          e.data.id === id ? { ...e, data: { ...e.data, label, confidence, attributes } } : e
-        )
-      });
-    } catch (e) {}
+    const cleanLabel = label.trim().slice(0, 160);
+    if (!cleanLabel) throw new Error('Entity label is required.');
+    const cleanAttributes = normaliseAttributes(attributes);
+    const db = await getDb();
+    await withTransaction(db, async () => {
+      await db.run('UPDATE nodes SET label = ?, confidence = ?, attributes = ? WHERE id = ?', [cleanLabel, Math.max(1, Math.min(5, Math.round(confidence))), JSON.stringify(cleanAttributes), id]);
+      await appendAuditEntry(db, 'UPDATE_NODE', id, `Updated metadata for: ${cleanLabel}`, currentOperator());
+    });
+    set({ graphElements: get().graphElements.map((element) => element.data.id === id ? { ...element, data: { ...element.data, label: cleanLabel, confidence: Math.max(1, Math.min(5, Math.round(confidence))), attributes: cleanAttributes } } : element) });
   },
 
   addEdge: async (sourceId, targetId, relationshipType) => {
     const { activeCaseId, graphElements } = get();
-    if (!activeCaseId || sourceId === targetId) return;
-    if (graphElements.some(e => e.data.source === sourceId && e.data.target === targetId)) return;
-    const id = `edge_${Date.now()}`; const now = new Date().toISOString();
+    const cleanRelationship = relationshipType.trim().slice(0, 80);
+    if (!activeCaseId || sourceId === targetId || !cleanRelationship) return;
+    if (graphElements.some((element) => element.data.source === sourceId && element.data.target === targetId && element.data.label === cleanRelationship)) return;
+    const id = createId('edge');
+    const now = new Date().toISOString();
     const db = await getDb();
-    await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, sourceId, targetId, relationshipType, now]);
-    await logAudit('ADD_EDGE', id, `Connected ${sourceId} to ${targetId}`);
-    set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: relationshipType, created_at: now } }] });
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, activeCaseId, sourceId, targetId, cleanRelationship, now]);
+      await appendAuditEntry(db, 'ADD_EDGE', id, `Connected ${sourceId} to ${targetId}`, currentOperator());
+    });
+    set({ graphElements: [...graphElements, { data: { id, source: sourceId, target: targetId, label: cleanRelationship, created_at: now } }] });
   },
 
   deleteNode: async (nodeId) => {
-    const { graphElements } = get();
     const db = await getDb();
-    await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
-    await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
-    await logAudit('DELETE_NODE', nodeId, 'Destroyed node and connections');
-    const remainingElements = graphElements.filter(e => e.data.id !== nodeId && e.data.source !== nodeId && e.data.target !== nodeId);
-    set({ graphElements: remainingElements, selectedNodeId: null, selectedEdgeId: null });
+    await withTransaction(db, async () => {
+      await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
+      await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
+      await appendAuditEntry(db, 'DELETE_NODE_CASCADE', nodeId, 'Deleted entity and all attached relationships', currentOperator());
+    });
+    set({ graphElements: get().graphElements.filter((element) => element.data.id !== nodeId && element.data.source !== nodeId && element.data.target !== nodeId), selectedNodeId: null, selectedEdgeId: null });
   },
 
   deleteEdge: async (edgeId) => {
-    const { graphElements } = get();
     const db = await getDb();
-    await db.run('DELETE FROM edges WHERE id = ?', [edgeId]);
-    await logAudit('DELETE_EDGE', edgeId, 'Severed relationship');
-    set({ graphElements: graphElements.filter(e => e.data.id !== edgeId), selectedEdgeId: null });
+    await withTransaction(db, async () => {
+      await db.run('DELETE FROM edges WHERE id = ?', [edgeId]);
+      await appendAuditEntry(db, 'DELETE_EDGE', edgeId, 'Deleted relationship', currentOperator());
+    });
+    set({ graphElements: get().graphElements.filter((element) => element.data.id !== edgeId), selectedEdgeId: null });
   },
 
   setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null }),
   setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null }),
   setConnectingFromId: (id) => set({ connectingFromId: id }),
-  toggleFilter: (nodeType) => set(s => ({ hiddenNodeTypes: s.hiddenNodeTypes.includes(nodeType) ? s.hiddenNodeTypes.filter(t => t !== nodeType) : [...s.hiddenNodeTypes, nodeType] })),
+  toggleFilter: (nodeType) => set((state) => ({ hiddenNodeTypes: state.hiddenNodeTypes.includes(nodeType) ? state.hiddenNodeTypes.filter((type) => type !== nodeType) : [...state.hiddenNodeTypes, nodeType] })),
 
   loadNotes: async (caseId) => {
     await ensureNotesTable();
     const db = await getDb();
-    const res = await db.query('SELECT * FROM notes WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
-    const loadedNotes = (res.values || []).map((n: any) => ({ ...n, linked_nodes: JSON.parse(n.linked_nodes || '[]') }));
-    set({ notes: loadedNotes });
+    const response = await db.query('SELECT * FROM notes WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
+    const notes = (response.values || []).map((note: any) => ({ ...note, linked_nodes: parseLinkedNodes(note.linked_nodes) }));
+    set({ notes });
   },
+
   addNote: async (content, linkedNodeIds) => {
-    const { activeCaseId, notes } = get();
-    if (!activeCaseId) return;
-    const id = `note_${Date.now()}`; const now = new Date().toISOString();
+    const { activeCaseId, notes, graphElements } = get();
+    const cleanContent = content.trim().slice(0, MAX_NOTE_LENGTH);
+    if (!activeCaseId || !cleanContent) return;
+    const validNodeIds = new Set(graphElements.filter((element) => !element.data.source).map((element) => element.data.id));
+    const safeLinkedNodes = [...new Set(linkedNodeIds.filter((id) => validNodeIds.has(id)))];
+    const id = createId('note');
+    const now = new Date().toISOString();
     await ensureNotesTable();
     const db = await getDb();
-    await db.run('INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [id, activeCaseId, content, JSON.stringify(linkedNodeIds), now]);
-    await logAudit('ADD_NOTE', id, 'Intelligence log recorded');
-    set({ notes: [{ id, case_id: activeCaseId, content, linked_nodes: linkedNodeIds, created_at: now }, ...notes] });
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [id, activeCaseId, cleanContent, JSON.stringify(safeLinkedNodes), now]);
+      await appendAuditEntry(db, 'ADD_NOTE', id, 'Recorded intelligence note', currentOperator());
+    });
+    set({ notes: [{ id, case_id: activeCaseId, content: cleanContent, linked_nodes: safeLinkedNodes, created_at: now }, ...notes] });
   },
+
   deleteNote: async (noteId) => {
     const db = await getDb();
-    await db.run('DELETE FROM notes WHERE id = ?', [noteId]);
-    await logAudit('DELETE_NOTE', noteId, 'Destroyed log');
-    set(s => ({ notes: s.notes.filter(n => n.id !== noteId) }));
+    await withTransaction(db, async () => {
+      await db.run('DELETE FROM notes WHERE id = ?', [noteId]);
+      await appendAuditEntry(db, 'DELETE_NOTE', noteId, 'Deleted intelligence note', currentOperator());
+    });
+    set((state) => ({ notes: state.notes.filter((note) => note.id !== noteId) }));
   },
 
   exportActiveCase: async () => {
     const { activeCaseId, cases, graphElements, notes } = get();
     if (!activeCaseId) return;
-    const activeCase = cases.find(c => c.id === activeCaseId);
+    const activeCase = cases.find((entry) => entry.id === activeCaseId);
     if (!activeCase) return;
-    const password = window.prompt("SECURE EXPORT: Enter a strong password:");
+    const password = window.prompt('SECURE EXPORT: Enter a new password of at least 12 characters:');
     if (!password) return;
-    await logAudit('EXPORT_PACKAGE', activeCaseId, 'Exported Encrypted intelligence package');
+    if (password.length < 12) throw new Error('Export password must contain at least 12 characters.');
+
     const exportData = {
-      metadata: { reference: activeCase.reference_number, title: activeCase.title, classification: activeCase.classification, exported_at: new Date().toISOString(), system: "CrimeGraph v1.1" },
-      intelligence_nodes: graphElements.filter(e => !e.data.source), relationships: graphElements.filter(e => e.data.source), notes: notes
+      metadata: {
+        package_version: 2,
+        reference: activeCase.reference_number,
+        title: activeCase.title,
+        classification: activeCase.classification,
+        exported_at: new Date().toISOString(),
+        system: 'CrimeGraph',
+      },
+      intelligence_nodes: graphElements.filter((element) => !element.data.source),
+      relationships: graphElements.filter((element) => Boolean(element.data.source)),
+      notes,
     };
-    try {
-      const encryptedPayload = await encryptPackage(JSON.stringify(exportData, null, 2), password);
-      const fileName = `intel_pkg_${activeCase.reference_number}.enc`;
-      const fileResult = await Filesystem.writeFile({ path: fileName, data: encryptedPayload, directory: Directory.Cache, encoding: Encoding.UTF8 });
-      useAuthStore.getState().setIntentionalBackground(true);
-      const canShare = await Share.canShare();
-      if (canShare.value) await Share.share({ title: `Encrypted Package: ${activeCase.reference_number}`, text: `AES-GCM Data`, url: fileResult.uri, dialogTitle: 'Export' });
-    } catch (e) { alert('Export failed.'); }
+    const encryptedPayload = await encryptPackage(JSON.stringify(exportData), password);
+    const fileName = `intel_pkg_${activeCase.reference_number.replace(/[^A-Za-z0-9_-]/g, '_')}.enc`;
+    const fileResult = await Filesystem.writeFile({ path: fileName, data: encryptedPayload, directory: Directory.Cache, encoding: Encoding.UTF8 });
+    await logAudit('EXPORT_PACKAGE', activeCaseId, `Exported encrypted package for ${activeCase.reference_number}`);
+    useAuthStore.getState().setIntentionalBackground(true);
+    const canShare = await Share.canShare();
+    if (!canShare.value) throw new Error('The device cannot share this encrypted package.');
+    await Share.share({ title: `Encrypted package: ${activeCase.reference_number}`, text: 'Encrypted CrimeGraph intelligence package', url: fileResult.uri, dialogTitle: 'Export package' });
   },
 
-  importCase: async (encryptedData: string) => {
-    const password = window.prompt("SECURE IMPORT: Enter decryption password:");
+  importCase: async (encryptedData) => {
+    if (!encryptedData || encryptedData.length > MAX_IMPORT_BASE64_LENGTH) throw new Error('Import package is empty or exceeds the supported size.');
+    const password = window.prompt('SECURE IMPORT: Enter the package password:');
     if (!password) return;
-    try {
-      const jsonStr = await decryptPackage(encryptedData, password);
-      const data = JSON.parse(jsonStr);
-      const db = await getDb();
-      const newCaseId = `case_${Date.now()}`; const now = new Date().toISOString();
-      await db.run('INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [newCaseId, `${data.metadata.reference}-IMP`, `${data.metadata.title} (Imported)`, 'other', 'active', data.metadata.classification || 'OFFICIAL', now, now, now]);
+    const parsed = validateImportedPackage(JSON.parse(await decryptPackage(encryptedData, password)));
+    const db = await getDb();
+    const newCaseId = createId('case');
+    const now = new Date().toISOString();
+    const importedReference = `${parsed.reference}-IMP-${now.slice(0, 10).replace(/-/g, '')}`.slice(0, 80);
 
+    await withTransaction(db, async () => {
+      await db.run(
+        'INSERT INTO cases (id, reference_number, title, case_type, status, classification, date_opened, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [newCaseId, importedReference, `${parsed.title} (Imported)`.slice(0, 160), 'other', 'active', parsed.classification, now, now, now],
+      );
       const idMap = new Map<string, string>();
-      for (const node of data.intelligence_nodes) {
-        const newNodeId = `node_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
-        idMap.set(node.data.id, newNodeId);
-        await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)', [newNodeId, newCaseId, node.data.label, node.data.type, node.data.confidence, node.data.created_at || now, node.data.attributes ? JSON.stringify(node.data.attributes) : '{}']);
+      for (const node of parsed.nodes) {
+        const data = readElementData(node);
+        if (!data || typeof data.id !== 'string' || typeof data.label !== 'string' || !ENTITY_TYPES.has(String(data.type))) continue;
+        const newNodeId = createId('node');
+        idMap.set(data.id, newNodeId);
+        const confidence = Number.isFinite(Number(data.confidence)) ? Math.max(1, Math.min(5, Math.round(Number(data.confidence)))) : 3;
+        await db.run(
+          'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [newNodeId, newCaseId, data.label.trim().slice(0, 160), String(data.type), confidence, typeof data.created_at === 'string' ? data.created_at.slice(0, 40) : now, JSON.stringify(normaliseAttributes(data.attributes as Record<string, string> || {}))],
+        );
       }
-      for (const edge of data.relationships) {
-        const newEdgeId = `edge_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
-        const newSource = idMap.get(edge.data.source); const newTarget = idMap.get(edge.data.target);
-        if (newSource && newTarget) await db.run('INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [newEdgeId, newCaseId, newSource, newTarget, edge.data.label, edge.data.created_at || now]);
+      for (const relationship of parsed.relationships) {
+        const data = readElementData(relationship);
+        if (!data || typeof data.source !== 'string' || typeof data.target !== 'string' || typeof data.label !== 'string') continue;
+        const source = idMap.get(data.source);
+        const target = idMap.get(data.target);
+        if (!source || !target || source === target) continue;
+        await db.run(
+          'INSERT INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [createId('edge'), newCaseId, source, target, data.label.trim().slice(0, 80), typeof data.created_at === 'string' ? data.created_at.slice(0, 40) : now],
+        );
       }
       await ensureNotesTable();
-      if (data.notes) {
-        for (const note of data.notes) {
-          const newNoteId = `note_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
-          const newLinkedNodes = note.linked_nodes.map((oldId: string) => idMap.get(oldId)).filter(Boolean);
-          await db.run('INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [newNoteId, newCaseId, note.content, JSON.stringify(newLinkedNodes), note.created_at || now]);
-        }
+      for (const note of parsed.notes) {
+        if (!note || typeof note !== 'object') continue;
+        const candidate = note as Record<string, unknown>;
+        const content = typeof candidate.content === 'string' ? candidate.content.trim().slice(0, MAX_NOTE_LENGTH) : '';
+        if (!content) continue;
+        const linkedNodeIds = Array.isArray(candidate.linked_nodes) ? candidate.linked_nodes.filter((id): id is string => typeof id === 'string').map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)) : [];
+        await db.run(
+          'INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)',
+          [createId('note'), newCaseId, content, JSON.stringify(linkedNodeIds), typeof candidate.created_at === 'string' ? candidate.created_at.slice(0, 40) : now],
+        );
       }
-      get().loadCases();
-      await logAudit('IMPORT_CASE', newCaseId, `Imported package`);
-    } catch (e) { alert('Decryption failed.'); throw e; }
+      await appendAuditEntry(db, 'IMPORT_CASE', newCaseId, `Imported encrypted package ${parsed.reference}`, currentOperator());
+    });
+    await get().loadCases();
   },
 
   loadAuditLogs: async () => {
     const db = await getDb();
-    const res = await db.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200');
-    set({ auditLogs: res.values || [] });
+    const response = await db.query('SELECT * FROM audit_logs ORDER BY timestamp ASC, id ASC');
+    const orderedLogs = response.values || [];
+    const auditVerification = await verifyAuditChain(orderedLogs);
+    set({ auditLogs: [...orderedLogs].reverse(), auditVerification });
   },
 
   wipeDatabase: async () => {
     const db = await getDb();
-    await db.run('DELETE FROM edges'); await db.run('DELETE FROM nodes'); await db.run('DELETE FROM cases'); await db.run('DELETE FROM audit_logs');
-    try { await db.run('DELETE FROM notes'); } catch(e){}
-    set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], notes: [] });
-    await logAudit('SYSTEM_WIPE', 'ALL_DATA', 'Wiped via Kill Switch');
-    get().loadAuditLogs(); get().loadCases();
-  }
+    await withTransaction(db, async () => {
+      await ensureNotesTable();
+      await db.run('DELETE FROM edges');
+      await db.run('DELETE FROM nodes');
+      await db.run('DELETE FROM notes');
+      await db.run('DELETE FROM cases');
+      await db.run('DELETE FROM audit_logs');
+      await db.run('DELETE FROM users');
+    });
+    await appendAuditEntry(db, 'SYSTEM_WIPE', 'DEVICE', 'Database sanitised; prior intelligence and operator records removed.', 'SYSTEM_WIPE');
+    set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], auditVerification: null, notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null });
+  },
 }));

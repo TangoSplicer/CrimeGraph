@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { NativeBiometric } from 'capacitor-native-biometric';
+import { AndroidBiometryStrength, BiometricAuth } from '@aparajita/capacitor-biometric-auth';
 
 const ShieldIcon = ({ className }: { className: string }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -23,9 +23,14 @@ export const AuthScreen: React.FC = () => {
     const triggerBiometrics = async () => {
       if (isFirstBoot || mode === 'admin') return;
       try {
-        const available = await NativeBiometric.isAvailable();
-        if (available.isAvailable) {
-          await NativeBiometric.verifyIdentity({ reason: "Authenticate to access CrimeGraph", title: "Operator Login" });
+        const available = await BiometricAuth.checkBiometry();
+        if (available.strongBiometryIsAvailable) {
+          await BiometricAuth.authenticate({
+            reason: 'Authenticate to access CrimeGraph',
+            androidTitle: 'Operator Login',
+            androidBiometryStrength: AndroidBiometryStrength.strong,
+            allowDeviceCredential: false,
+          });
           const success = await biometricLogin();
           if (!success) setError('Biometric verified, but no active operator profile found. Use PIN.');
         }
@@ -45,7 +50,7 @@ export const AuthScreen: React.FC = () => {
   const handlePressEnd = () => { if (pressTimer.current) clearTimeout(pressTimer.current); };
 
   const handleFirstBoot = async () => {
-    if (adminPass.length < 8) return setError('Master password must be 8+ characters.');
+    if (adminPass.length < 12) return setError('Master password must be at least 12 characters.');
     setIsLoading(true); setError('');
     try { await setupMasterAdmin(adminPass); setAdminPass(''); } 
     catch (err: any) { setError(`SYS ERROR: ${err.message}`); } 
@@ -73,7 +78,7 @@ export const AuthScreen: React.FC = () => {
         <ShieldIcon className="w-16 h-16 text-[#e74c3c] mb-6" />
         <h1 className="text-xl font-bold tracking-widest text-[#e74c3c] mb-2 uppercase">System Commissioning</h1>
         <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected. Establish primary password.</p>
-        <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="Master Password" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full max-w-sm bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center text-lg tracking-widest focus:outline-none mb-4 disabled:opacity-50" />
+        <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="12+ Character Master Password" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full max-w-sm bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center text-lg tracking-widest focus:outline-none mb-4 disabled:opacity-50" />
         <button onClick={handleFirstBoot} disabled={isLoading} className="w-full max-w-sm bg-[#e74c3c] text-white font-bold py-4 rounded disabled:opacity-50">INITIALISE HARDWARE</button>
         {error && <p className="text-[#e74c3c] text-xs mt-4 font-bold">{error}</p>}
       </div>
@@ -91,8 +96,8 @@ export const AuthScreen: React.FC = () => {
       <form onSubmit={handleLogin} className="w-full max-w-sm space-y-4">
         {mode === 'standard' ? (
           <>
-            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE (e.g. TEST-99)" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
-            <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="6-DIGIT PIN" maxLength={6} disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center tracking-[1em] font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
+            <input type="text" value={badge} onChange={e => setBadge(e.target.value.toUpperCase())} placeholder="BADGE (e.g. WYP-112)" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
+            <input type="password" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} placeholder="6-DIGIT PIN" maxLength={6} inputMode="numeric" pattern="[0-9]*" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full bg-[#14171f] border border-[#252a3a] p-4 rounded text-center tracking-[1em] font-mono focus:outline-none focus:border-[#3a7bd5] disabled:opacity-50" />
           </>
         ) : (
           <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)} placeholder="MASTER PASSWORD" disabled={isLoading} autoComplete="off" autoCorrect="off" className="w-full bg-[#14171f] border border-[#e74c3c] p-4 rounded text-center tracking-widest font-mono focus:outline-none focus:border-[#e74c3c] disabled:opacity-50" />

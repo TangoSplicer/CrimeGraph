@@ -4,6 +4,7 @@ import { GraphCanvas } from '../components/graph/GraphCanvas';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { BottomSheet } from '../components/shared/BottomSheet';
 import { useCaseStore } from '../stores/caseStore';
+import { buildGraphInsights } from '../utils/graphInsights';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
 
@@ -18,6 +19,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [newNoteContent, setNewNoteContent] = useState('');
   const [taggedNodes, setTaggedNodes] = useState<string[]>([]);
 
@@ -28,6 +30,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [editAttributes, setEditAttributes] = useState<{key: string, value: string}[]>([]);
 
   const activeCase = cases.find(c => c.id === activeCaseId);
+  const graphInsights = buildGraphInsights(graphElements, notes);
 
   useEffect(() => {
     if (!activeCaseId) navigate('/');
@@ -90,8 +93,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
           <p className="text-[10px] text-[#7880a0] truncate w-32">{activeCase.title}</p>
         </div>
         <div className="flex items-center space-x-2">
-          <button onClick={() => { setIsNotesOpen(!isNotesOpen); setIsFilterOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isNotesOpen ? 'bg-[#f39c12] text-white border-[#f39c12]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>LOG ({notes.length})</button>
-          <button onClick={() => { setIsFilterOpen(!isFilterOpen); setIsNotesOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${hiddenNodeTypes.length > 0 ? 'bg-[#e74c3c] text-white border-[#e74c3c]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>FILTERS {hiddenNodeTypes.length > 0 && `(${hiddenNodeTypes.length})`}</button>
+          <button onClick={() => { setIsAnalysisOpen(!isAnalysisOpen); setIsNotesOpen(false); setIsFilterOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isAnalysisOpen ? 'bg-[#2ecc71] text-[#0c0e14] border-[#2ecc71]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>ANALYSIS</button>
+          <button onClick={() => { setIsNotesOpen(!isNotesOpen); setIsFilterOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isNotesOpen ? 'bg-[#f39c12] text-white border-[#f39c12]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>LOG ({notes.length})</button>
+          <button onClick={() => { setIsFilterOpen(!isFilterOpen); setIsNotesOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${hiddenNodeTypes.length > 0 ? 'bg-[#e74c3c] text-white border-[#e74c3c]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>FILTERS {hiddenNodeTypes.length > 0 && `(${hiddenNodeTypes.length})`}</button>
           <button onClick={exportActiveCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors">EXPORT</button>
         </div>
       </div>
@@ -107,6 +111,26 @@ export const GraphWorkspaceScreen: React.FC = () => {
               </label>
             ))}
           </div>
+        </div>
+      )}
+
+      {isAnalysisOpen && (
+        <div className="absolute top-[60px] right-4 z-30 bg-[#1c2030] border border-[#2ecc71]/60 rounded-lg shadow-xl w-72 p-3 mt-safe">
+          <div className="flex justify-between items-center border-b border-[#252a3a] pb-2 mb-3">
+            <h3 className="text-[10px] font-bold text-[#2ecc71] uppercase tracking-widest">Case Structure Analysis</h3>
+            <span className="text-[9px] text-[#7880a0]">No person-level scoring</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Entities</p><p className="text-lg font-mono text-[#dde1ec]">{graphInsights.entityCount}</p></div>
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Links</p><p className="text-lg font-mono text-[#dde1ec]">{graphInsights.relationshipCount}</p></div>
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Unconnected</p><p className="text-lg font-mono text-[#f39c12]">{graphInsights.isolatedEntities}</p></div>
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">No metadata</p><p className="text-lg font-mono text-[#f39c12]">{graphInsights.entitiesWithoutMetadata}</p></div>
+          </div>
+          <div className="border-t border-[#252a3a] pt-2">
+            <p className="text-[9px] text-[#7880a0] uppercase font-bold mb-1">Most connected entities</p>
+            {graphInsights.mostConnected.length ? graphInsights.mostConnected.map(entity => <div key={entity.id} className="flex justify-between text-[10px] py-1"><span className="text-[#dde1ec] truncate max-w-[12rem]">{entity.label}</span><span className="text-[#2ecc71] font-mono">{entity.connections} links</span></div>) : <p className="text-[10px] text-[#7880a0] italic">No relationships recorded.</p>}
+          </div>
+          <p className="mt-3 text-[9px] text-[#7880a0]">Documentation cue: {graphInsights.notesWithoutLinks} note{graphInsights.notesWithoutLinks === 1 ? '' : 's'} without linked entities.</p>
         </div>
       )}
 
@@ -152,7 +176,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
         </div>
       )}
 
-      <div className="flex-1 relative overflow-hidden" onClick={() => { setIsFilterOpen(false); setIsNotesOpen(false); }}>
+      <div className="flex-1 relative overflow-hidden" onClick={() => { setIsFilterOpen(false); setIsNotesOpen(false); setIsAnalysisOpen(false); }}>
         <GraphCanvas />
         {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
           <button onClick={() => navigate('/add')} className="absolute bottom-24 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">

@@ -1,14 +1,18 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuthStore } from '../../stores/authStore';
+import { can } from '../../utils/permissions';
 
 export const BottomTabBar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const currentUser = useAuthStore((state) => state.currentUser);
 
   const navItems = [
     { label: 'HOME', path: '/', icon: '⌂' },
     { label: 'GRAPH', path: '/workspace', icon: '⎈' },
-    { label: 'SETTINGS', path: '/settings', icon: '⚙' }
+    ...(can(currentUser?.role, 'intelligence:review') ? [{ label: 'REVIEW', path: '/review', icon: '✓' }] : []),
+    { label: 'SETTINGS', path: '/settings', icon: '⚙' },
   ];
 
   return (

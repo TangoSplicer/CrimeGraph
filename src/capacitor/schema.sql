@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS nodes (
   created_at TEXT NOT NULL,
   occurred_at TEXT,
   attributes TEXT,
+  review_status TEXT NOT NULL DEFAULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 'approved', 'returned')),
+  submitted_by TEXT,
+  submitted_at TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  review_notes TEXT,
   FOREIGN KEY(case_id) REFERENCES cases(id)
 );
 
@@ -107,6 +113,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);
 CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);
 CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);

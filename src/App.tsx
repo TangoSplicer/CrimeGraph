@@ -5,6 +5,7 @@ import { DashboardScreen } from './screens/DashboardScreen';
 import { GraphWorkspaceScreen } from './screens/GraphWorkspaceScreen';
 import { AddNodeScreen } from './screens/AddNodeScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { SupervisorReviewScreen } from './screens/SupervisorReviewScreen';
 import { AuthScreen } from './screens/AuthScreen';
 import { useAuthStore } from './stores/authStore';
 
@@ -55,6 +56,7 @@ export const App: React.FC = () => {
         <Route path="/workspace" element={<GraphWorkspaceScreen />} />
         <Route path="/add" element={<AddNodeScreen />} />
         <Route path="/settings" element={<SettingsScreen />} />
+        <Route path="/review" element={<SupervisorReviewScreen />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

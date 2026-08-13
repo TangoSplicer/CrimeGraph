@@ -93,7 +93,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
       
       -- We ensure new installs get the attributes column
-      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, occurred_at TEXT, attributes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
+      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, occurred_at TEXT, attributes TEXT, review_status TEXT NOT NULL DEFAULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 'approved', 'returned')), submitted_by TEXT, submitted_at TEXT, reviewed_by TEXT, reviewed_at TEXT, review_notes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS trusted_peers (
         peer_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
@@ -148,6 +148,12 @@ export async function initDatabase() {
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_uri TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_mime_type TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_digest TEXT;',
+      "ALTER TABLE nodes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 'approved', 'returned'));",
+      'ALTER TABLE nodes ADD COLUMN submitted_by TEXT;',
+      'ALTER TABLE nodes ADD COLUMN submitted_at TEXT;',
+      'ALTER TABLE nodes ADD COLUMN reviewed_by TEXT;',
+      'ALTER TABLE nodes ADD COLUMN reviewed_at TEXT;',
+      'ALTER TABLE nodes ADD COLUMN review_notes TEXT;',
     ]) {
       try {
         await db.execute(migration);
@@ -162,6 +168,7 @@ export async function initDatabase() {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');

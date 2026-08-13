@@ -8,7 +8,7 @@ import { decryptPackage, encryptPackage } from '../capacitor/crypto';
 import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
-import { assertPermission } from '../utils/permissions';
+import { assertPermission, can } from '../utils/permissions';
 import {
   createEvidenceFingerprint,
   normaliseEvidenceProvenance,
@@ -18,7 +18,10 @@ import {
 } from '../utils/evidenceProvenance';
 
 export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; }
-export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; }; }
+export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
+
+export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; review_status?: ReviewStatus; submitted_by?: string | null; submitted_at?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; review_notes?: string | null; }; }
+export interface ReviewQueueItem { nodeId: string; caseId: string; caseReference: string; caseTitle: string; label: string; nodeType: string; submittedBy: string; submittedAt: string; reviewNotes: string; }
 export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; previous_hash?: string | null; entry_hash?: string | null; }
 export interface IntelNote { id: string; case_id: string; content: string; linked_nodes: string[]; created_at: string; }
 
@@ -28,6 +31,7 @@ interface CaseState {
   graphElements: GraphElement[];
   auditLogs: AuditLog[];
   auditVerification: AuditVerificationResult | null;
+  reviewQueue: ReviewQueueItem[];
   notes: IntelNote[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -50,6 +54,8 @@ interface CaseState {
   exportActiveCase: () => Promise<void>;
   importCase: (encryptedData: string) => Promise<void>;
   loadAuditLogs: () => Promise<void>;
+  loadReviewQueue: () => Promise<void>;
+  reviewNode: (nodeId: string, decision: 'approved' | 'returned', notes: string) => Promise<void>;
   wipeDatabase: () => Promise<void>;
   toggleFilter: (nodeType: string) => void;
   loadNotes: (caseId: string) => Promise<void>;
@@ -62,6 +68,7 @@ const MAX_ATTRIBUTE_ENTRIES = 40;
 const MAX_ATTRIBUTE_KEY_LENGTH = 80;
 const MAX_ATTRIBUTE_VALUE_LENGTH = 500;
 const MAX_NOTE_LENGTH = 10000;
+const MAX_REVIEW_NOTE_LENGTH = 2000;
 const MAX_IMPORT_BASE64_LENGTH = 12 * 1024 * 1024;
 const MAX_IMPORT_NODES = 2000;
 const MAX_IMPORT_EDGES = 6000;
@@ -174,6 +181,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   graphElements: [],
   auditLogs: [],
   auditVerification: null,
+  reviewQueue: [],
   notes: [],
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -262,7 +270,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     (nodesResponse.values || []).forEach((node: any) => {
       let attributes: Record<string, string> = {};
       try { attributes = normaliseAttributes(JSON.parse(node.attributes || '{}')); } catch { /* A malformed legacy attribute is safely ignored. */ }
-      elements.push({ data: { id: node.id, label: node.label, type: node.type, confidence: node.confidence, created_at: node.created_at, occurred_at: node.occurred_at, attributes, evidence: evidenceByNodeId.get(node.id) } });
+      elements.push({ data: { id: node.id, label: node.label, type: node.type, confidence: node.confidence, created_at: node.created_at, occurred_at: node.occurred_at, attributes, evidence: evidenceByNodeId.get(node.id), review_status: node.review_status || 'not_required', submitted_by: node.submitted_by || null, submitted_at: node.submitted_at || null, reviewed_by: node.reviewed_by || null, reviewed_at: node.reviewed_at || null, review_notes: node.review_notes || null } });
     });
     (edgesResponse.values || []).forEach((edge: any) => {
       elements.push({ data: { id: edge.id, source: edge.source, target: edge.target, label: edge.label, created_at: edge.created_at } });
@@ -280,6 +288,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const id = createId('node');
     const now = new Date().toISOString();
     const cleanAttributes = normaliseAttributes(attributes);
+    const reviewStatus: ReviewStatus = useAuthStore.getState().currentUser?.role === 'field' ? 'pending' : 'not_required';
+    const submittedBy = reviewStatus === 'pending' ? currentOperator() : null;
+    const submittedAt = reviewStatus === 'pending' ? now : null;
     const normalisedEvidence = nodeType === 'evidence' ? normaliseEvidenceProvenance(evidence) : null;
     if (normalisedEvidence) validateEvidenceProvenance(normalisedEvidence);
     const normalisedOccurredAt = normaliseOccurredAt(occurredAt || normalisedEvidence?.acquiredAt);
@@ -287,8 +298,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     let evidenceRecord: EvidenceProvenance | undefined;
     await withTransaction(db, async () => {
       await db.run(
-        'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, activeCaseId, cleanLabel, nodeType, Math.max(1, Math.min(5, Math.round(confidence))), now, normalisedOccurredAt, JSON.stringify(cleanAttributes)],
+        'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status, submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, activeCaseId, cleanLabel, nodeType, Math.max(1, Math.min(5, Math.round(confidence))), now, normalisedOccurredAt, JSON.stringify(cleanAttributes), reviewStatus, submittedBy, submittedAt],
       );
       if (normalisedEvidence) {
         const provenanceId = createId('evidence');
@@ -314,23 +325,38 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           ],
         );
       }
-      await appendAuditEntry(db, normalisedEvidence ? 'REGISTER_EVIDENCE' : 'ADD_NODE', id, normalisedEvidence ? `Registered evidence ${normalisedEvidence.exhibitNumber}: ${cleanLabel}` : `Added ${nodeType}: ${cleanLabel}`, currentOperator());
+      await appendAuditEntry(db, reviewStatus === 'pending' ? 'SUBMIT_INTELLIGENCE_FOR_REVIEW' : (normalisedEvidence ? 'REGISTER_EVIDENCE' : 'ADD_NODE'), id, reviewStatus === 'pending' ? `Submitted ${nodeType}: ${cleanLabel} for supervisor review.` : (normalisedEvidence ? `Registered evidence ${normalisedEvidence.exhibitNumber}: ${cleanLabel}` : `Added ${nodeType}: ${cleanLabel}`), currentOperator());
     });
-    set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, occurred_at: normalisedOccurredAt, attributes: cleanAttributes, evidence: evidenceRecord } }] });
+    set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, occurred_at: normalisedOccurredAt, attributes: cleanAttributes, evidence: evidenceRecord, review_status: reviewStatus, submitted_by: submittedBy, submitted_at: submittedAt, reviewed_by: null, reviewed_at: null, review_notes: null } }] });
+    if (reviewStatus === 'pending' && can(useAuthStore.getState().currentUser?.role, 'intelligence:review')) await get().loadReviewQueue();
   },
 
   updateNode: async (id, label, confidence, attributes, occurredAt) => {
-    assertCurrentPermission('intelligence:update');
     const cleanLabel = label.trim().slice(0, 160);
     if (!cleanLabel) throw new Error('Entity label is required.');
     const cleanAttributes = normaliseAttributes(attributes);
     const normalisedOccurredAt = normaliseOccurredAt(occurredAt);
     const db = await getDb();
+    const nodeResult = await db.query('SELECT review_status, submitted_by FROM nodes WHERE id = ?', [id]);
+    const node = nodeResult.values?.[0];
+    if (!node) throw new Error('The intelligence record no longer exists.');
+    const isReturnedSubmission = node.review_status === 'returned' && node.submitted_by === currentOperator();
+    assertCurrentPermission(isReturnedSubmission ? 'intelligence:resubmit' : 'intelligence:update');
+    const now = new Date().toISOString();
     await withTransaction(db, async () => {
-      await db.run('UPDATE nodes SET label = ?, confidence = ?, occurred_at = ?, attributes = ? WHERE id = ?', [cleanLabel, Math.max(1, Math.min(5, Math.round(confidence))), normalisedOccurredAt, JSON.stringify(cleanAttributes), id]);
-      await appendAuditEntry(db, 'UPDATE_NODE', id, `Updated intelligence metadata and chronology for: ${cleanLabel}`, currentOperator());
+      if (isReturnedSubmission) {
+        await db.run(
+          "UPDATE nodes SET label = ?, confidence = ?, occurred_at = ?, attributes = ?, review_status = 'pending', submitted_at = ?, reviewed_by = NULL, reviewed_at = NULL, review_notes = NULL WHERE id = ?",
+          [cleanLabel, Math.max(1, Math.min(5, Math.round(confidence))), normalisedOccurredAt, JSON.stringify(cleanAttributes), now, id],
+        );
+        await appendAuditEntry(db, 'RESUBMIT_INTELLIGENCE_FOR_REVIEW', id, `Corrected and resubmitted intelligence: ${cleanLabel}`, currentOperator());
+      } else {
+        await db.run('UPDATE nodes SET label = ?, confidence = ?, occurred_at = ?, attributes = ? WHERE id = ?', [cleanLabel, Math.max(1, Math.min(5, Math.round(confidence))), normalisedOccurredAt, JSON.stringify(cleanAttributes), id]);
+        await appendAuditEntry(db, 'UPDATE_NODE', id, `Updated intelligence metadata and chronology for: ${cleanLabel}`, currentOperator());
+      }
     });
-    set({ graphElements: get().graphElements.map((element) => element.data.id === id ? { ...element, data: { ...element.data, label: cleanLabel, confidence: Math.max(1, Math.min(5, Math.round(confidence))), occurred_at: normalisedOccurredAt, attributes: cleanAttributes } } : element) });
+    set({ graphElements: get().graphElements.map((element) => element.data.id === id ? { ...element, data: { ...element.data, label: cleanLabel, confidence: Math.max(1, Math.min(5, Math.round(confidence))), occurred_at: normalisedOccurredAt, attributes: cleanAttributes, ...(isReturnedSubmission ? { review_status: 'pending' as ReviewStatus, submitted_at: now, reviewed_by: null, reviewed_at: null, review_notes: null } : {}) } } : element) });
+    if (isReturnedSubmission && can(useAuthStore.getState().currentUser?.role, 'intelligence:review')) await get().loadReviewQueue();
   },
 
   addEdge: async (sourceId, targetId, relationshipType) => {
@@ -469,8 +495,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         idMap.set(data.id, newNodeId);
         const confidence = Number.isFinite(Number(data.confidence)) ? Math.max(1, Math.min(5, Math.round(Number(data.confidence)))) : 3;
         await db.run(
-          'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [newNodeId, newCaseId, data.label.trim().slice(0, 160), String(data.type), confidence, typeof data.created_at === 'string' ? data.created_at.slice(0, 40) : now, typeof data.occurred_at === 'string' ? normaliseOccurredAt(data.occurred_at) : null, JSON.stringify(normaliseAttributes(data.attributes as Record<string, string> || {}))],
+          'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status, submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [newNodeId, newCaseId, data.label.trim().slice(0, 160), String(data.type), confidence, typeof data.created_at === 'string' ? data.created_at.slice(0, 40) : now, typeof data.occurred_at === 'string' ? normaliseOccurredAt(data.occurred_at) : null, JSON.stringify(normaliseAttributes(data.attributes as Record<string, string> || {})), 'pending', 'IMPORTED_PACKAGE', now],
         );
         if (data.type === 'evidence' && data.evidence && typeof data.evidence === 'object') {
           const importedEvidence = normaliseEvidenceProvenance(data.evidence as EvidenceProvenanceInput);
@@ -529,6 +555,60 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     set({ auditLogs: [...orderedLogs].reverse(), auditVerification });
   },
 
+  loadReviewQueue: async () => {
+    assertCurrentPermission('intelligence:review');
+    const db = await getDb();
+    const response = await db.query(
+      `SELECT n.id AS node_id, n.case_id, n.label, n.type, n.submitted_by, n.submitted_at, n.review_notes,
+              c.reference_number, c.title AS case_title
+         FROM nodes n
+         INNER JOIN cases c ON c.id = n.case_id
+        WHERE n.review_status = 'pending'
+        ORDER BY COALESCE(n.submitted_at, n.created_at) ASC, n.created_at ASC`,
+    );
+    const reviewQueue: ReviewQueueItem[] = (response.values || []).map((record: any) => ({
+      nodeId: String(record.node_id),
+      caseId: String(record.case_id),
+      caseReference: String(record.reference_number),
+      caseTitle: String(record.case_title),
+      label: String(record.label),
+      nodeType: String(record.type),
+      submittedBy: String(record.submitted_by || 'UNKNOWN_OPERATOR'),
+      submittedAt: String(record.submitted_at || ''),
+      reviewNotes: String(record.review_notes || ''),
+    }));
+    set({ reviewQueue });
+  },
+
+  reviewNode: async (nodeId, decision, notes) => {
+    assertCurrentPermission('intelligence:review');
+    if (decision !== 'approved' && decision !== 'returned') throw new Error('Unsupported review decision.');
+    const cleanNotes = notes.trim().slice(0, MAX_REVIEW_NOTE_LENGTH);
+    if (decision === 'returned' && !cleanNotes) throw new Error('A correction comment is required when returning intelligence.');
+    const db = await getDb();
+    const record = (await db.query('SELECT id, label, case_id, review_status FROM nodes WHERE id = ?', [nodeId])).values?.[0];
+    if (!record) throw new Error('The intelligence record no longer exists.');
+    if (record.review_status !== 'pending') throw new Error('Only pending intelligence can be reviewed. Refresh the queue and try again.');
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run(
+        'UPDATE nodes SET review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ? WHERE id = ? AND review_status = ?',
+        [decision, currentOperator(), now, cleanNotes, nodeId, 'pending'],
+      );
+      const action = decision === 'approved' ? 'APPROVE_INTELLIGENCE' : 'RETURN_INTELLIGENCE_FOR_CORRECTION';
+      const detail = decision === 'approved'
+        ? `Approved intelligence: ${String(record.label)}${cleanNotes ? `. Review note: ${cleanNotes}` : ''}`
+        : `Returned intelligence for correction: ${String(record.label)}. Comment: ${cleanNotes}`;
+      await appendAuditEntry(db, action, nodeId, detail, currentOperator());
+    });
+    set((state) => ({
+      graphElements: state.graphElements.map((element) => element.data.id === nodeId
+        ? { ...element, data: { ...element.data, review_status: decision, reviewed_by: currentOperator(), reviewed_at: now, review_notes: cleanNotes } }
+        : element),
+    }));
+    await get().loadReviewQueue();
+  },
+
   wipeDatabase: async () => {
     assertCurrentPermission('system:wipe');
     await requireHighRiskReauthentication('Permanently wipe all protected CrimeGraph data');
@@ -540,6 +620,6 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     await destroyProtectedLocalStorage();
     const resetDb = await getDb();
     await appendAuditEntry(resetDb, 'SYSTEM_WIPE', 'DEVICE', 'Protected storage was reset and the device-held encryption secret was destroyed.', 'SYSTEM_WIPE');
-    set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], auditVerification: null, notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null });
+    set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], auditVerification: null, reviewQueue: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null });
   },
 }));

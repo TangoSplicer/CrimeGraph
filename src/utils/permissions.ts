@@ -1,0 +1,45 @@
+export const USER_ROLES = ['admin', 'supervisor', 'analyst', 'field', 'readonly'] as const;
+
+export type UserRole = typeof USER_ROLES[number];
+export type Permission =
+  | 'case:create'
+  | 'case:archive'
+  | 'case:restore'
+  | 'case:import'
+  | 'case:export'
+  | 'intelligence:create'
+  | 'intelligence:update'
+  | 'intelligence:delete'
+  | 'audit:view'
+  | 'operator:provision'
+  | 'system:wipe';
+
+const POLICY: Record<UserRole, readonly Permission[]> = {
+  admin: [
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export',
+    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'audit:view',
+    'operator:provision', 'system:wipe',
+  ],
+  supervisor: [
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export',
+    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'audit:view',
+  ],
+  analyst: [
+    'case:create', 'case:import', 'case:export',
+    'intelligence:create', 'intelligence:update', 'intelligence:delete',
+  ],
+  field: ['intelligence:create'],
+  readonly: [],
+};
+
+export const isUserRole = (value: unknown): value is UserRole =>
+  typeof value === 'string' && (USER_ROLES as readonly string[]).includes(value);
+
+export const can = (role: UserRole | null | undefined, permission: Permission): boolean =>
+  Boolean(role && POLICY[role].includes(permission));
+
+export const assertPermission = (role: UserRole | null | undefined, permission: Permission): void => {
+  if (!can(role, permission)) {
+    throw new Error(`Your assigned role is not permitted to perform this action (${permission}).`);
+  }
+};

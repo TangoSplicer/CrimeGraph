@@ -5,9 +5,17 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 import { decryptPackage, encryptPackage } from '../capacitor/crypto';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
+import { assertPermission } from '../utils/permissions';
+import {
+  createEvidenceFingerprint,
+  normaliseEvidenceProvenance,
+  validateEvidenceProvenance,
+  type EvidenceProvenance,
+  type EvidenceProvenanceInput,
+} from '../utils/evidenceProvenance';
 
 export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; }
-export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; attributes?: Record<string, string>; }; }
+export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; attributes?: Record<string, string>; evidence?: EvidenceProvenance; }; }
 export interface AuditLog { id: string; timestamp: string; user_id: string; action: string; target_id: string; details: string; previous_hash?: string | null; entry_hash?: string | null; }
 export interface IntelNote { id: string; case_id: string; content: string; linked_nodes: string[]; created_at: string; }
 
@@ -28,7 +36,7 @@ interface CaseState {
   archiveCase: (caseId: string) => Promise<void>;
   restoreCase: (caseId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
-  addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>) => Promise<void>;
+  addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput) => Promise<void>;
   updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
@@ -58,6 +66,8 @@ const MAX_IMPORT_NOTES = 2000;
 
 const createId = (prefix: string): string => window.crypto?.randomUUID ? `${prefix}_${window.crypto.randomUUID()}` : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 const currentOperator = (): string => useAuthStore.getState().currentUser?.badge || 'SYSTEM_UNKNOWN';
+const assertCurrentPermission = (permission: Parameters<typeof assertPermission>[1]): void =>
+  assertPermission(useAuthStore.getState().currentUser?.role, permission);
 
 const logAudit = async (action: string, targetId: string, details: string) => {
   const db = await getDb();
@@ -149,6 +159,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   addCase: async (title, refNumber, caseType, classification) => {
+    assertCurrentPermission('case:create');
     const cleanTitle = title.trim().slice(0, 160);
     const cleanReference = refNumber.trim().toUpperCase().slice(0, 80);
     if (!cleanTitle || !cleanReference) throw new Error('Case title and reference are required.');
@@ -166,6 +177,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   archiveCase: async (caseId) => {
+    assertCurrentPermission('case:archive');
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run("UPDATE cases SET status = 'archived', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
@@ -175,6 +187,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   restoreCase: async (caseId) => {
+    assertCurrentPermission('case:restore');
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run("UPDATE cases SET status = 'active', updated_at = ? WHERE id = ?", [new Date().toISOString(), caseId]);
@@ -187,11 +200,29 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const db = await getDb();
     const nodesResponse = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
     const edgesResponse = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
+    const evidenceResponse = await db.query('SELECT * FROM evidence_provenance WHERE case_id = ?', [caseId]);
+    const evidenceByNodeId = new Map<string, EvidenceProvenance>((evidenceResponse.values || []).map((record: any) => [record.node_id, {
+      id: record.id,
+      caseId: record.case_id,
+      nodeId: record.node_id,
+      exhibitNumber: record.exhibit_number,
+      sourceType: record.source_type,
+      sourceReference: record.source_reference,
+      acquiredAt: record.acquired_at,
+      acquiredBy: record.acquired_by,
+      handlingStatus: record.handling_status,
+      verificationStatus: record.verification_status,
+      chainOfCustody: record.chain_of_custody,
+      fingerprint: record.fingerprint,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at,
+      createdBy: record.created_by,
+    }]));
     const elements: GraphElement[] = [];
     (nodesResponse.values || []).forEach((node: any) => {
       let attributes: Record<string, string> = {};
       try { attributes = normaliseAttributes(JSON.parse(node.attributes || '{}')); } catch { /* A malformed legacy attribute is safely ignored. */ }
-      elements.push({ data: { id: node.id, label: node.label, type: node.type, confidence: node.confidence, created_at: node.created_at, attributes } });
+      elements.push({ data: { id: node.id, label: node.label, type: node.type, confidence: node.confidence, created_at: node.created_at, attributes, evidence: evidenceByNodeId.get(node.id) } });
     });
     (edgesResponse.values || []).forEach((edge: any) => {
       elements.push({ data: { id: edge.id, source: edge.source, target: edge.target, label: edge.label, created_at: edge.created_at } });
@@ -199,7 +230,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     set({ graphElements: elements });
   },
 
-  addNode: async (nodeType, label, confidence, attributes = {}) => {
+  addNode: async (nodeType, label, confidence, attributes = {}, evidence = {}) => {
+    assertCurrentPermission('intelligence:create');
     const { activeCaseId, graphElements } = get();
     const cleanLabel = label.trim().slice(0, 160);
     if (!activeCaseId) throw new Error('Select a case before adding an entity.');
@@ -208,18 +240,45 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const id = createId('node');
     const now = new Date().toISOString();
     const cleanAttributes = normaliseAttributes(attributes);
+    const normalisedEvidence = nodeType === 'evidence' ? normaliseEvidenceProvenance(evidence) : null;
+    if (normalisedEvidence) validateEvidenceProvenance(normalisedEvidence);
     const db = await getDb();
+    let evidenceRecord: EvidenceProvenance | undefined;
     await withTransaction(db, async () => {
       await db.run(
         'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)',
         [id, activeCaseId, cleanLabel, nodeType, Math.max(1, Math.min(5, Math.round(confidence))), now, JSON.stringify(cleanAttributes)],
       );
-      await appendAuditEntry(db, 'ADD_NODE', id, `Added ${nodeType}: ${cleanLabel}`, currentOperator());
+      if (normalisedEvidence) {
+        const provenanceId = createId('evidence');
+        evidenceRecord = {
+          id: provenanceId,
+          caseId: activeCaseId,
+          nodeId: id,
+          ...normalisedEvidence,
+          fingerprint: await createEvidenceFingerprint(normalisedEvidence),
+          createdAt: now,
+          updatedAt: now,
+          createdBy: currentOperator(),
+        };
+        await db.run(
+          `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, created_at, updated_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            evidenceRecord.id, evidenceRecord.caseId, evidenceRecord.nodeId, evidenceRecord.exhibitNumber,
+            evidenceRecord.sourceType, evidenceRecord.sourceReference, evidenceRecord.acquiredAt, evidenceRecord.acquiredBy,
+            evidenceRecord.handlingStatus, evidenceRecord.verificationStatus, evidenceRecord.chainOfCustody, evidenceRecord.fingerprint,
+            evidenceRecord.createdAt, evidenceRecord.updatedAt, evidenceRecord.createdBy,
+          ],
+        );
+      }
+      await appendAuditEntry(db, normalisedEvidence ? 'REGISTER_EVIDENCE' : 'ADD_NODE', id, normalisedEvidence ? `Registered evidence ${normalisedEvidence.exhibitNumber}: ${cleanLabel}` : `Added ${nodeType}: ${cleanLabel}`, currentOperator());
     });
-    set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, attributes: cleanAttributes } }] });
+    set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, attributes: cleanAttributes, evidence: evidenceRecord } }] });
   },
 
   updateNode: async (id, label, confidence, attributes) => {
+    assertCurrentPermission('intelligence:update');
     const cleanLabel = label.trim().slice(0, 160);
     if (!cleanLabel) throw new Error('Entity label is required.');
     const cleanAttributes = normaliseAttributes(attributes);
@@ -232,6 +291,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   addEdge: async (sourceId, targetId, relationshipType) => {
+    assertCurrentPermission('intelligence:create');
     const { activeCaseId, graphElements } = get();
     const cleanRelationship = relationshipType.trim().slice(0, 80);
     if (!activeCaseId || sourceId === targetId || !cleanRelationship) return;
@@ -247,9 +307,11 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   deleteNode: async (nodeId) => {
+    assertCurrentPermission('intelligence:delete');
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
+      await db.run('DELETE FROM evidence_provenance WHERE node_id = ?', [nodeId]);
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
       await appendAuditEntry(db, 'DELETE_NODE_CASCADE', nodeId, 'Deleted entity and all attached relationships', currentOperator());
     });
@@ -257,6 +319,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   deleteEdge: async (edgeId) => {
+    assertCurrentPermission('intelligence:delete');
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run('DELETE FROM edges WHERE id = ?', [edgeId]);
@@ -279,6 +342,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   addNote: async (content, linkedNodeIds) => {
+    assertCurrentPermission('intelligence:create');
     const { activeCaseId, notes, graphElements } = get();
     const cleanContent = content.trim().slice(0, MAX_NOTE_LENGTH);
     if (!activeCaseId || !cleanContent) return;
@@ -296,6 +360,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   deleteNote: async (noteId) => {
+    assertCurrentPermission('intelligence:delete');
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run('DELETE FROM notes WHERE id = ?', [noteId]);
@@ -305,6 +370,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   exportActiveCase: async () => {
+    assertCurrentPermission('case:export');
     const { activeCaseId, cases, graphElements, notes } = get();
     if (!activeCaseId) return;
     const activeCase = cases.find((entry) => entry.id === activeCaseId);
@@ -315,7 +381,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
     const exportData = {
       metadata: {
-        package_version: 2,
+        package_version: 3,
         reference: activeCase.reference_number,
         title: activeCase.title,
         classification: activeCase.classification,
@@ -337,6 +403,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   importCase: async (encryptedData) => {
+    assertCurrentPermission('case:import');
     if (!encryptedData || encryptedData.length > MAX_IMPORT_BASE64_LENGTH) throw new Error('Import package is empty or exceeds the supported size.');
     const password = window.prompt('SECURE IMPORT: Enter the package password:');
     if (!password) return;
@@ -362,6 +429,24 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [newNodeId, newCaseId, data.label.trim().slice(0, 160), String(data.type), confidence, typeof data.created_at === 'string' ? data.created_at.slice(0, 40) : now, JSON.stringify(normaliseAttributes(data.attributes as Record<string, string> || {}))],
         );
+        if (data.type === 'evidence' && data.evidence && typeof data.evidence === 'object') {
+          const importedEvidence = normaliseEvidenceProvenance(data.evidence as EvidenceProvenanceInput);
+          validateEvidenceProvenance(importedEvidence);
+          const provenanceId = createId('evidence');
+          const createdAt = typeof (data.evidence as Record<string, unknown>).createdAt === 'string' ? String((data.evidence as Record<string, unknown>).createdAt).slice(0, 40) : now;
+          const updatedAt = typeof (data.evidence as Record<string, unknown>).updatedAt === 'string' ? String((data.evidence as Record<string, unknown>).updatedAt).slice(0, 40) : now;
+          await db.run(
+            `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, created_at, updated_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              provenanceId, newCaseId, newNodeId, importedEvidence.exhibitNumber, importedEvidence.sourceType,
+              importedEvidence.sourceReference, importedEvidence.acquiredAt, importedEvidence.acquiredBy,
+              importedEvidence.handlingStatus, importedEvidence.verificationStatus, importedEvidence.chainOfCustody,
+              await createEvidenceFingerprint(importedEvidence), createdAt, updatedAt,
+              typeof (data.evidence as Record<string, unknown>).createdBy === 'string' ? String((data.evidence as Record<string, unknown>).createdBy).slice(0, 120) : 'IMPORTED_PACKAGE',
+            ],
+          );
+        }
       }
       for (const relationship of parsed.relationships) {
         const data = readElementData(relationship);
@@ -392,6 +477,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   loadAuditLogs: async () => {
+    assertCurrentPermission('audit:view');
     const db = await getDb();
     const response = await db.query('SELECT * FROM audit_logs ORDER BY timestamp ASC, id ASC');
     const orderedLogs = response.values || [];
@@ -400,12 +486,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   },
 
   wipeDatabase: async () => {
+    assertCurrentPermission('system:wipe');
     const db = await getDb();
     await withTransaction(db, async () => {
       await ensureNotesTable();
       await db.run('DELETE FROM edges');
       await db.run('DELETE FROM nodes');
       await db.run('DELETE FROM notes');
+      await db.run('DELETE FROM evidence_provenance');
       await db.run('DELETE FROM cases');
       await db.run('DELETE FROM audit_logs');
       await db.run('DELETE FROM users');

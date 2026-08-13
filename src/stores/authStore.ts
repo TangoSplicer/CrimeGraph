@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { getDb } from '../capacitor/db';
 import { hashPassword, verifyPassword } from '../capacitor/crypto';
+import { assertPermission, isUserRole, type UserRole } from '../utils/permissions';
+import { appendAuditEntry } from '../utils/auditLedger';
 
-export interface User { id: string; badge: string; name: string; role: 'admin' | 'analyst'; }
+export interface User { id: string; badge: string; name: string; role: UserRole; }
 
 interface AuthState {
   currentUser: User | null;
@@ -15,7 +17,7 @@ interface AuthState {
   login: (badge: string, pin: string) => Promise<boolean>;
   biometricLogin: () => Promise<boolean>;
   adminLogin: (password: string) => Promise<boolean>;
-  addAnalyst: (badge: string, name: string, pin: string) => Promise<void>;
+  addOperator: (badge: string, name: string, pin: string, role: Exclude<UserRole, 'admin'>) => Promise<void>;
   logout: () => void;
 }
 
@@ -80,7 +82,7 @@ const updateLastLogin = async (db: any, userId: string, biometricEnabled = false
   }
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
   currentUser: null,
   isFirstBoot: true,
   isAppReady: false,
@@ -119,9 +121,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (!badge.trim() || !isSixDigitPin(pin)) return false;
     try {
       const db = await getDb();
-      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role = ?', [badge.trim().toUpperCase(), 'analyst']);
+      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role != ?', [badge.trim().toUpperCase(), 'admin']);
       const user = result.values?.[0];
-      if (!user || !await verifyAndUpgradeCredential(db, user, pin)) return false;
+      if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, pin)) return false;
 
       await updateLastLogin(db, user.id, true);
       localStorage.setItem('crimegraph_last_user', user.badge);
@@ -138,9 +140,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       const badge = localStorage.getItem('crimegraph_last_user');
       if (!badge) return false;
       const db = await getDb();
-      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role = ? AND biometric_enabled = 1', [badge, 'analyst']);
+      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role != ? AND biometric_enabled = 1', [badge, 'admin']);
       const user = result.values?.[0];
-      if (!user) return false;
+      if (!user || !isUserRole(user.role)) return false;
 
       await updateLastLogin(db, user.id);
       set({ currentUser: user as User });
@@ -156,7 +158,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const db = await getDb();
       const result = await db.query('SELECT * FROM users WHERE role = ? LIMIT 1', ['admin']);
       const user = result.values?.[0];
-      if (!user || !await verifyAndUpgradeCredential(db, user, password)) return false;
+      if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, password)) return false;
 
       await updateLastLogin(db, user.id);
       set({ currentUser: user as User });
@@ -167,19 +169,30 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  addAnalyst: async (badge: string, name: string, pin: string) => {
+  addOperator: async (badge: string, name: string, pin: string, role: Exclude<UserRole, 'admin'>) => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
     const cleanBadge = badge.trim().toUpperCase();
     const cleanName = name.trim();
     if (!/^[A-Z0-9-]{3,32}$/.test(cleanBadge)) throw new Error('Badge must contain 3–32 letters, numbers, or hyphens.');
     if (!cleanName || cleanName.length > 100) throw new Error('Operator name is required and must be 100 characters or fewer.');
     if (!isSixDigitPin(pin)) throw new Error('PIN must contain exactly six digits.');
+    if (!isUserRole(role)) throw new Error('Select a valid operational role.');
 
     const db = await getDb();
     const id = window.crypto?.randomUUID ? `user_${window.crypto.randomUUID()}` : `user_${Date.now()}`;
-    await db.run(
-      'INSERT INTO users (id, badge, name, hash, role, biometric_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, cleanBadge, cleanName, await hashPassword(pin), 'analyst', 0, new Date().toISOString()],
-    );
+    const now = new Date().toISOString();
+    await db.execute('BEGIN IMMEDIATE;');
+    try {
+      await db.run(
+        'INSERT INTO users (id, badge, name, hash, role, biometric_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, cleanBadge, cleanName, await hashPassword(pin), role, 0, now],
+      );
+      await appendAuditEntry(db, 'PROVISION_OPERATOR', id, `Provisioned ${role} operator ${cleanBadge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+      await db.execute('COMMIT;');
+    } catch (error) {
+      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original provisioning failure. */ }
+      throw error;
+    }
   },
 
   logout: () => set({ currentUser: null, intentionalBackground: false }),

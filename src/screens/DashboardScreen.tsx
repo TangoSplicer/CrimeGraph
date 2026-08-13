@@ -3,11 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useCaseStore } from '../stores/caseStore';
 import { useAuthStore } from '../stores/authStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
+import { can } from '../utils/permissions';
 
 export const DashboardScreen: React.FC = () => {
   const navigate = useNavigate();
   const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase } = useCaseStore();
-  const { setIntentionalBackground } = useAuthStore(); // 🚀 NEW: Import Intentional Background trigger
+  const { setIntentionalBackground, currentUser } = useAuthStore(); // 🚀 NEW: Import Intentional Background trigger
+  const canCreateCase = can(currentUser?.role, 'case:create');
+  const canImportCase = can(currentUser?.role, 'case:import');
+  const canArchiveCase = can(currentUser?.role, 'case:archive');
   
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -22,8 +26,12 @@ export const DashboardScreen: React.FC = () => {
   const handleCreateCase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || !newRef.trim()) return;
-    await addCase(newTitle, newRef, 'operation', newClass);
-    setIsModalOpen(false); setNewTitle(''); setNewRef(''); setActiveTab('active');
+    try {
+      await addCase(newTitle, newRef, 'operation', newClass);
+      setIsModalOpen(false); setNewTitle(''); setNewRef(''); setActiveTab('active');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'The case could not be created.');
+    }
   };
 
   const handleOpenCase = (id: string) => {
@@ -67,8 +75,8 @@ export const DashboardScreen: React.FC = () => {
           <p className="text-xs text-[#7880a0]">Select a database to load</p>
         </div>
         <div className="flex space-x-2">
-          <button onClick={handleImport} className="px-3 py-2 bg-[#252a3a] text-[#dde1ec] text-xs font-bold rounded uppercase hover:bg-[#3a415c]">Import</button>
-          <button onClick={() => setIsModalOpen(true)} className="px-3 py-2 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase shadow-[0_0_10px_rgba(58,123,213,0.3)] hover:bg-[#4a8be5]">+ New</button>
+          <button onClick={handleImport} disabled={!canImportCase} className="px-3 py-2 bg-[#252a3a] text-[#dde1ec] text-xs font-bold rounded uppercase hover:bg-[#3a415c] disabled:opacity-40">Import</button>
+          <button onClick={() => setIsModalOpen(true)} disabled={!canCreateCase} className="px-3 py-2 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase shadow-[0_0_10px_rgba(58,123,213,0.3)] hover:bg-[#4a8be5] disabled:opacity-40">+ New</button>
         </div>
       </div>
 
@@ -90,7 +98,7 @@ export const DashboardScreen: React.FC = () => {
               <h2 className="text-lg font-bold text-white mb-4 line-clamp-1">{c.title}</h2>
               <div className="flex justify-between items-end border-t border-[#252a3a] pt-3">
                 <span className="text-[10px] text-[#7880a0] uppercase tracking-widest">{new Date(c.date_opened).toLocaleDateString()}</span>
-                {activeTab === 'active' && <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id); }} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline">Archive</button>}
+                {activeTab === 'active' && <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id).catch((error) => alert(error instanceof Error ? error.message : 'Unable to archive case.')); }} disabled={!canArchiveCase} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline disabled:opacity-40">Archive</button>}
               </div>
             </div>
           ))

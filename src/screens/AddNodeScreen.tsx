@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCaseStore } from '../stores/caseStore';
+import {
+  EVIDENCE_HANDLING_STATUSES,
+  EVIDENCE_SOURCE_TYPES,
+  EVIDENCE_VERIFICATION_STATUSES,
+  type EvidenceProvenanceInput,
+} from '../utils/evidenceProvenance';
 
 const nodeTypes = [
   { id: 'person', label: 'Person', icon: '👤', color: 'bg-[#3a7bd5]' },
@@ -32,6 +38,16 @@ export const AddNodeScreen: React.FC = () => {
   const [label, setLabel] = useState('');
   const [confidence, setConfidence] = useState(3);
   const [attributes, setAttributes] = useState<{key: string, value: string}[]>([]);
+  const [evidence, setEvidence] = useState<Required<EvidenceProvenanceInput>>({
+    exhibitNumber: '',
+    sourceType: 'document',
+    sourceReference: '',
+    acquiredAt: new Date().toISOString().slice(0, 16),
+    acquiredBy: '',
+    handlingStatus: 'recorded',
+    verificationStatus: 'unverified',
+    chainOfCustody: '',
+  });
 
   useEffect(() => {
     const templateKeys = metadataTemplates[selectedType] || [];
@@ -55,7 +71,7 @@ export const AddNodeScreen: React.FC = () => {
       if (attr.key.trim() && attr.value.trim()) attrRecord[attr.key.trim()] = attr.value.trim();
     });
 
-    await addNode(selectedType, label.trim(), confidence, attrRecord);
+    await addNode(selectedType, label.trim(), confidence, attrRecord, selectedType === 'evidence' ? evidence : undefined);
     navigate('/workspace');
   };
 
@@ -92,6 +108,35 @@ export const AddNodeScreen: React.FC = () => {
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-2 tracking-wider">Intelligence Confidence: {confidence} / 5</label>
           <input type="range" min="1" max="5" value={confidence} onChange={(e) => setConfidence(parseInt(e.target.value))} className="w-full accent-[#3a7bd5]" />
         </section>
+
+        {selectedType === 'evidence' && (
+          <section className="border border-[#1a8a4a]/70 bg-[#1a8a4a]/10 rounded-lg p-4 space-y-3">
+            <div>
+              <h2 className="text-xs font-bold text-[#55c987] uppercase tracking-widest">Evidence Provenance</h2>
+              <p className="text-[10px] text-[#9aa3bb] mt-1">Required fields establish the acquisition and handling record for this evidence item.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input type="text" value={evidence.exhibitNumber} onChange={e => setEvidence({ ...evidence, exhibitNumber: e.target.value })} placeholder="Exhibit / Reference *" className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" required />
+              <select value={evidence.sourceType} onChange={e => setEvidence({ ...evidence, sourceType: e.target.value as typeof evidence.sourceType })} className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a] capitalize">
+                {EVIDENCE_SOURCE_TYPES.map(type => <option key={type} value={type}>{type.replace('_', ' ')}</option>)}
+              </select>
+            </div>
+            <input type="text" value={evidence.sourceReference} onChange={e => setEvidence({ ...evidence, sourceReference: e.target.value })} placeholder="Source reference / origin *" className="w-full bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" required />
+            <div className="grid grid-cols-2 gap-3">
+              <input type="datetime-local" value={evidence.acquiredAt} onChange={e => setEvidence({ ...evidence, acquiredAt: e.target.value })} className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" required />
+              <input type="text" value={evidence.acquiredBy} onChange={e => setEvidence({ ...evidence, acquiredBy: e.target.value })} placeholder="Acquired by / source *" className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <select value={evidence.handlingStatus} onChange={e => setEvidence({ ...evidence, handlingStatus: e.target.value as typeof evidence.handlingStatus })} className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a] capitalize">
+                {EVIDENCE_HANDLING_STATUSES.map(status => <option key={status} value={status}>{status.replace('_', ' ')}</option>)}
+              </select>
+              <select value={evidence.verificationStatus} onChange={e => setEvidence({ ...evidence, verificationStatus: e.target.value as typeof evidence.verificationStatus })} className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a] capitalize">
+                {EVIDENCE_VERIFICATION_STATUSES.map(status => <option key={status} value={status}>{status.replace('_', ' ')}</option>)}
+              </select>
+            </div>
+            <textarea value={evidence.chainOfCustody} onChange={e => setEvidence({ ...evidence, chainOfCustody: e.target.value })} placeholder="Chain of custody / handling notes" className="w-full h-20 bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" />
+          </section>
+        )}
 
         <section className="border-t border-[#252a3a] pt-6">
           <div className="flex justify-between items-center mb-4">

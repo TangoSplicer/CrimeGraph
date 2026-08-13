@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useCaseStore } from '../stores/caseStore';
 import { useSyncStore } from '../stores/syncStore';
+import { USER_ROLES, type UserRole } from '../utils/permissions';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const SettingsScreen: React.FC = () => {
-  const { currentUser, logout, addAnalyst } = useAuthStore();
+  const { currentUser, logout, addOperator } = useAuthStore();
   const { wipeDatabase, auditLogs, auditVerification, loadAuditLogs } = useCaseStore();
   
   const { 
@@ -21,6 +22,7 @@ export const SettingsScreen: React.FC = () => {
   const [newBadge, setNewBadge] = useState('');
   const [newName, setNewName] = useState('');
   const [newPin, setNewPin] = useState('');
+  const [newRole, setNewRole] = useState<Exclude<UserRole, 'admin'>>('analyst');
   const [adminMsg, setAdminMsg] = useState('');
   const [auditFilter, setAuditFilter] = useState('');
 
@@ -41,9 +43,10 @@ export const SettingsScreen: React.FC = () => {
     e.preventDefault();
     if (newPin.length !== 6) return setAdminMsg('PIN must be exactly 6 digits.');
     try {
-      await addAnalyst(newBadge, newName, newPin);
-      setAdminMsg(`Officer ${newBadge} successfully provisioned.`);
-      setNewBadge(''); setNewName(''); setNewPin('');
+      await addOperator(newBadge, newName, newPin, newRole);
+      await loadAuditLogs();
+      setAdminMsg(`${newRole} ${newBadge} successfully provisioned.`);
+      setNewBadge(''); setNewName(''); setNewPin(''); setNewRole('analyst');
     } catch (err) {
       setAdminMsg('Failed to add user. Badge may already exist.');
     }
@@ -127,9 +130,12 @@ export const SettingsScreen: React.FC = () => {
               <p className="text-[10px] text-[#7880a0] mb-4">Provision new operator access to local hardware.</p>
               <form onSubmit={handleAddUser} className="space-y-3">
                 <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value)} required placeholder="BADGE (e.g. WYP-112)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
-                <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OFFICER NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
+                <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OPERATOR NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
+                <select value={newRole} onChange={e => setNewRole(e.target.value as Exclude<UserRole, 'admin'>)} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase">
+                  {USER_ROLES.filter((role): role is Exclude<UserRole, 'admin'> => role !== 'admin').map(role => <option key={role} value={role}>{role}</option>)}
+                </select>
                 <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} required placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
-                <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Officer</button>
+                <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Operator</button>
               </form>
               {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}
             </section>

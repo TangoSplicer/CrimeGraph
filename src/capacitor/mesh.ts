@@ -28,8 +28,8 @@ export const MeshNetwork = {
                 service: CRIMEGRAPH_SERVICE_UUID,
                 characteristics: [{
                   uuid: AUDIT_CHARACTERISTIC_UUID,
-                  permissions: { read: true, write: true },
-                  properties: { read: true, writeWithoutResponse: true, write: true }
+                  permissions: { read: true },
+                  properties: { read: true }
                 }]
               }, () => {
                 
@@ -92,31 +92,11 @@ export const MeshNetwork = {
     });
   },
 
-  transmitEncryptedPayload: async (deviceId: string, encryptedBase64: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      if (!window.bluetoothle) return resolve(false);
-
-      // Connect to discovered peer
-      window.bluetoothle.connect({ address: deviceId }, (result: any) => {
-        if (result.status === 'connected') {
-          
-          window.bluetoothle.discover({ address: deviceId }, () => {
-            // Transmit payload
-            window.bluetoothle.write({
-              address: deviceId,
-              service: CRIMEGRAPH_SERVICE_UUID,
-              characteristic: AUDIT_CHARACTERISTIC_UUID,
-              value: encryptedBase64 // cordova-plugin-bluetoothle expects base64 strings natively
-            }, () => {
-              // Disconnect and wipe signature
-              window.bluetoothle.disconnect({ address: deviceId }, () => resolve(true));
-            }, () => {
-              window.bluetoothle.disconnect({ address: deviceId }, () => resolve(false));
-            });
-          }, () => resolve(false));
-          
-        }
-      }, () => resolve(false));
-    });
+  transmitEncryptedPayload: async (_deviceId: string, _encryptedBase64: string): Promise<boolean> => {
+    // Intentionally unavailable. Discovery is retained, but case content must not be sent
+    // until device identity, authenticated key agreement, replay protection, authorization,
+    // framing, acknowledgement, and verified inbound persistence are implemented together.
+    console.warn('CrimeGraph mesh transfer is disabled pending a secure collaboration protocol.');
+    return false;
   }
 };

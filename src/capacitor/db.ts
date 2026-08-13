@@ -49,6 +49,25 @@ export async function initDatabase() {
       
       -- We ensure new installs get the attributes column
       CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, attributes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
+      CREATE TABLE IF NOT EXISTS evidence_provenance (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        node_id TEXT NOT NULL UNIQUE,
+        exhibit_number TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_reference TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        acquired_by TEXT NOT NULL,
+        handling_status TEXT NOT NULL,
+        verification_status TEXT NOT NULL,
+        chain_of_custody TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id),
+        FOREIGN KEY(node_id) REFERENCES nodes(id)
+      );
     `;
     await db.execute(createTables);
     
@@ -68,9 +87,13 @@ export async function initDatabase() {
     }
 
     try {
+      await db.execute("UPDATE users SET role = 'supervisor' WHERE role = 'sio';");
+      await db.execute("UPDATE users SET role = 'field' WHERE role = 'officer';");
       await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');
     } catch (indexError) {
       console.warn('Database index creation skipped.', indexError);
     }

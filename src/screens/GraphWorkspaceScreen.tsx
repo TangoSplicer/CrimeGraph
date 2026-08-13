@@ -4,6 +4,8 @@ import { GraphCanvas } from '../components/graph/GraphCanvas';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { BottomSheet } from '../components/shared/BottomSheet';
 import { useCaseStore } from '../stores/caseStore';
+import { useAuthStore } from '../stores/authStore';
+import { can } from '../utils/permissions';
 import { buildGraphInsights } from '../utils/graphInsights';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
@@ -29,8 +31,13 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [editConfidence, setEditConfidence] = useState(3);
   const [editAttributes, setEditAttributes] = useState<{key: string, value: string}[]>([]);
 
+  const currentUser = useAuthStore((state) => state.currentUser);
   const activeCase = cases.find(c => c.id === activeCaseId);
   const graphInsights = buildGraphInsights(graphElements, notes);
+  const canCreateIntelligence = can(currentUser?.role, 'intelligence:create');
+  const canUpdateIntelligence = can(currentUser?.role, 'intelligence:update');
+  const canDeleteIntelligence = can(currentUser?.role, 'intelligence:delete');
+  const canExportCase = can(currentUser?.role, 'case:export');
 
   useEffect(() => {
     if (!activeCaseId) navigate('/');
@@ -96,7 +103,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
           <button onClick={() => { setIsAnalysisOpen(!isAnalysisOpen); setIsNotesOpen(false); setIsFilterOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isAnalysisOpen ? 'bg-[#2ecc71] text-[#0c0e14] border-[#2ecc71]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>ANALYSIS</button>
           <button onClick={() => { setIsNotesOpen(!isNotesOpen); setIsFilterOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isNotesOpen ? 'bg-[#f39c12] text-white border-[#f39c12]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>LOG ({notes.length})</button>
           <button onClick={() => { setIsFilterOpen(!isFilterOpen); setIsNotesOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${hiddenNodeTypes.length > 0 ? 'bg-[#e74c3c] text-white border-[#e74c3c]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>FILTERS {hiddenNodeTypes.length > 0 && `(${hiddenNodeTypes.length})`}</button>
-          <button onClick={exportActiveCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors">EXPORT</button>
+          <button onClick={exportActiveCase} disabled={!canExportCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">EXPORT</button>
         </div>
       </div>
 
@@ -149,7 +156,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
                 ))}
               </div>
             </div>
-            <button onClick={handleAddNote} disabled={!newNoteContent.trim()} className="w-full bg-[#f39c12] hover:bg-[#e67e22] disabled:bg-[#252a3a] text-white font-bold py-2 rounded text-xs transition-colors">SUBMIT LOG ENTRY</button>
+            <button onClick={handleAddNote} disabled={!newNoteContent.trim() || !canCreateIntelligence} className="w-full bg-[#f39c12] hover:bg-[#e67e22] disabled:bg-[#252a3a] text-white font-bold py-2 rounded text-xs transition-colors">SUBMIT LOG ENTRY</button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {notes.length === 0 && <p className="text-xs text-[#7880a0] italic text-center mt-4">No narrative logs recorded.</p>}
@@ -178,7 +185,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
 
       <div className="flex-1 relative overflow-hidden" onClick={() => { setIsFilterOpen(false); setIsNotesOpen(false); setIsAnalysisOpen(false); }}>
         <GraphCanvas />
-        {!selectedNodeId && !selectedEdgeId && !connectingFromId && (
+        {!selectedNodeId && !selectedEdgeId && !connectingFromId && canCreateIntelligence && (
           <button onClick={() => navigate('/add')} className="absolute bottom-24 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">
             +
           </button>
@@ -231,6 +238,23 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
+            {selectedNode.data.evidence && (
+              <div className="space-y-2 border-t border-[#1a8a4a]/60 pt-4 mb-4">
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="text-[10px] text-[#55c987] uppercase font-bold tracking-widest">Evidence Provenance</h4>
+                  <span className="text-[9px] px-2 py-1 rounded bg-[#1a8a4a]/20 text-[#55c987] uppercase">{selectedNode.data.evidence.verificationStatus}</span>
+                </div>
+                {[
+                  ['Exhibit', selectedNode.data.evidence.exhibitNumber],
+                  ['Source', `${selectedNode.data.evidence.sourceType}: ${selectedNode.data.evidence.sourceReference}`],
+                  ['Acquired', `${new Date(selectedNode.data.evidence.acquiredAt).toLocaleString()} · ${selectedNode.data.evidence.acquiredBy}`],
+                  ['Handling', selectedNode.data.evidence.handlingStatus],
+                  ['Recorded by', selectedNode.data.evidence.createdBy],
+                ].map(([label, value]) => <div key={label} className="flex justify-between items-start border-b border-[#252a3a]/50 pb-2"><span className="text-xs text-[#7880a0] font-bold">{label}</span><span className="text-xs text-[#dde1ec] text-right ml-4 break-words max-w-[60%] capitalize">{value}</span></div>)}
+                {selectedNode.data.evidence.chainOfCustody && <p className="text-[10px] text-[#9aa3bb] leading-relaxed pt-1">{selectedNode.data.evidence.chainOfCustody}</p>}
+                <p className="text-[9px] text-[#7880a0] font-mono break-all">Fingerprint: {selectedNode.data.evidence.fingerprint}</p>
+              </div>
+            )}
             <div className="space-y-2 border-t border-[#252a3a] pt-4 mb-4">
               <h4 className="text-[10px] text-[#3a7bd5] uppercase font-bold tracking-widest mb-3">Entity Metadata</h4>
               {selectedNode.data.attributes && Object.keys(selectedNode.data.attributes).length > 0 ? (
@@ -257,9 +281,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
             
             {/* 🚀 NEW: Edit Button Grid */}
             <div className="grid grid-cols-2 gap-3 pt-4 pb-4">
-              <button onClick={handleStartConnection} className="py-3 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase">Connect</button>
-              <button onClick={handleStartEdit} className="py-3 bg-[#f39c12] text-white text-xs font-bold rounded uppercase">Edit</button>
-              <button onClick={handleDeleteNode} className="py-3 border border-[#c0392b] text-[#c0392b] text-xs font-bold rounded uppercase col-span-2">Delete Node</button>
+              <button onClick={handleStartConnection} disabled={!canCreateIntelligence} className="py-3 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase disabled:opacity-40">Connect</button>
+              <button onClick={handleStartEdit} disabled={!canUpdateIntelligence} className="py-3 bg-[#f39c12] text-white text-xs font-bold rounded uppercase disabled:opacity-40">Edit</button>
+              <button onClick={handleDeleteNode} disabled={!canDeleteIntelligence} className="py-3 border border-[#c0392b] text-[#c0392b] text-xs font-bold rounded uppercase col-span-2 disabled:opacity-40">Delete Node</button>
             </div>
           </div>
         )}
@@ -275,7 +299,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#dde1ec] font-mono text-xs text-center">{getLabelForNode(selectedEdge.data.target)}</span>
             </div>
             <div className="pt-4 pb-4">
-              <button onClick={handleDeleteEdge} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded uppercase">Sever Connection</button>
+              <button onClick={handleDeleteEdge} disabled={!canDeleteIntelligence} className="w-full py-3 bg-[#c0392b] text-white font-bold rounded uppercase disabled:opacity-40">Sever Connection</button>
             </div>
           </div>
         )}

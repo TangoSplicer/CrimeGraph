@@ -121,7 +121,7 @@ const readElementData = (value: unknown): Record<string, unknown> | null => {
   return data && typeof data === 'object' ? data as Record<string, unknown> : null;
 };
 
-const validateImportedPackage = (candidate: unknown) => {
+export const validateImportedPackage = (candidate: unknown) => {
   if (!candidate || typeof candidate !== 'object') throw new Error('Package is not a JSON object.');
   const data = candidate as Record<string, unknown>;
   const metadata = data.metadata;
@@ -152,7 +152,7 @@ const withTransaction = async <T>(db: any, operation: () => Promise<T>): Promise
   }
 };
 
-const migrateLegacyEvidenceAttachments = async (db: any, records: any[]): Promise<void> => {
+export const migrateLegacyEvidenceAttachments = async (db: any, records: any[]): Promise<void> => {
   if (!Capacitor.isNativePlatform()) return;
   for (const record of records) {
     const legacyUri = String(record.attachment_uri || '');

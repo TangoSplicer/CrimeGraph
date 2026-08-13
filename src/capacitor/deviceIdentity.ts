@@ -16,6 +16,9 @@ export interface DeviceIdentity {
   fingerprint: string;
 }
 
+export const isValidDeviceStorageSecret = (secret: unknown): secret is string =>
+  typeof secret === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(secret);
+
 const assertNativeIdentitySupport = (): void => {
   if (!Capacitor.isNativePlatform()) {
     throw new Error('Verified pairing is available only in the native Android application. Browser previews do not expose a secure device identity.');
@@ -34,7 +37,7 @@ export const getDeviceIdentity = async (): Promise<DeviceIdentity> => {
 export const getDeviceStorageSecret = async (): Promise<string> => {
   assertNativeIdentitySupport();
   const result = await NativeDeviceIdentity.getStorageSecret();
-  if (!result.secret || !/^[A-Za-z0-9+/=]{32,}$/.test(result.secret)) throw new Error('The device storage secret is unavailable.');
+  if (!isValidDeviceStorageSecret(result.secret)) throw new Error('The device storage secret is unavailable.');
   return result.secret;
 };
 

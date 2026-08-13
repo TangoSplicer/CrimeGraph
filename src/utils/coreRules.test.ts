@@ -57,7 +57,7 @@ describe('case structure analysis', () => {
   it('reports documentation and evidence review gaps without ranking people', () => {
     const elements: GraphElement[] = [
       { data: { id: 'person-1', label: 'Entity A', type: 'person', confidence: 3, attributes: {} } },
-      { data: { id: 'evidence-1', label: 'Image', type: 'evidence', confidence: 4, occurred_at: '2026-08-13T12:00:00.000Z', evidence: {
+      { data: { id: 'evidence-1', label: 'Image', type: 'evidence', confidence: 4, review_status: 'pending', occurred_at: '2026-08-13T12:00:00.000Z', evidence: {
         id: 'ev-1', caseId: 'case-1', nodeId: 'evidence-1', exhibitNumber: 'EXH-101', sourceType: 'digital', sourceReference: 'Device camera', acquiredAt: '2026-08-13T12:00:00.000Z', acquiredBy: 'SUP-001', handlingStatus: 'secured', verificationStatus: 'unverified', chainOfCustody: 'Recorded', attachmentName: '', attachmentUri: '', attachmentMimeType: '', attachmentDigest: '', fingerprint: 'fp', createdAt: '2026-08-13T12:00:00.000Z', updatedAt: '2026-08-13T12:00:00.000Z', createdBy: 'SUP-001',
       } } },
       { data: { id: 'edge-1', source: 'person-1', target: 'evidence-1', label: 'RELATED_TO' } },

@@ -1,11 +1,36 @@
 import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, CapacitorSQLitePlugin } from '@capacitor-community/sqlite';
 import { defineCustomElements } from 'jeep-sqlite/loader';
+import { destroyDeviceStorageSecret, getDeviceStorageSecret } from './deviceIdentity';
 
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
 let dbInstance: any = null;
 let webStoreReady: Promise<void> | null = null;
+const DATABASE_NAME = 'crimegraph_db';
+
+interface DatabaseSecurityMode {
+  encrypted: boolean;
+  mode: 'no-encryption' | 'encryption' | 'secret';
+}
+
+const prepareDatabaseSecurity = async (): Promise<DatabaseSecurityMode> => {
+  if (!Capacitor.isNativePlatform()) return { encrypted: false, mode: 'no-encryption' };
+
+  const storageSecret = await getDeviceStorageSecret();
+  const hasStoredSecret = await sqliteConnection.isSecretStored();
+  if (!hasStoredSecret.result) {
+    await sqliteConnection.setEncryptionSecret(storageSecret);
+  } else {
+    const secretMatches = await sqliteConnection.checkEncryptionSecret(storageSecret);
+    if (!secretMatches.result) throw new Error('Protected local storage cannot be unlocked with this device identity.');
+  }
+
+  const databaseExists = await sqliteConnection.isDatabase(DATABASE_NAME);
+  if (!databaseExists.result) return { encrypted: true, mode: 'encryption' };
+  const isEncrypted = await sqliteConnection.isDatabaseEncrypted(DATABASE_NAME);
+  return { encrypted: true, mode: isEncrypted.result ? 'secret' : 'encryption' };
+};
 
 const initialiseWebStore = async (): Promise<void> => {
   if (Capacitor.getPlatform() !== 'web') return;
@@ -29,26 +54,46 @@ export async function getDb() {
   return await initDatabase();
 }
 
+export async function destroyProtectedLocalStorage(): Promise<void> {
+  try {
+    if (dbInstance) await dbInstance.close();
+  } catch { /* Continue with connection cleanup. */ }
+  try {
+    const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
+    if (isConn.result) await sqliteConnection.closeConnection(DATABASE_NAME, false);
+  } catch { /* A missing or already closed connection is safe to ignore. */ }
+  try {
+    await sqlite.deleteDatabase({ database: DATABASE_NAME });
+  } catch { /* The database may already have been removed. */ }
+  if (Capacitor.isNativePlatform()) {
+    try { await sqliteConnection.clearEncryptionSecret(); } catch { /* Continue to destroy the device-held wrapping key. */ }
+    await destroyDeviceStorageSecret();
+  }
+  dbInstance = null;
+}
+
 export async function initDatabase() {
   try {
     await initialiseWebStore();
-    const isConn = await sqliteConnection.isConnection('crimegraph_db', false);
+    const securityMode = await prepareDatabaseSecurity();
+    const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
     let db;
     if (isConn.result) {
-      db = await sqliteConnection.retrieveConnection('crimegraph_db', false);
+      db = await sqliteConnection.retrieveConnection(DATABASE_NAME, false);
     } else {
-      db = await sqliteConnection.createConnection('crimegraph_db', false, 'no-encryption', 1, false);
+      db = await sqliteConnection.createConnection(DATABASE_NAME, securityMode.encrypted, securityMode.mode, 1, false);
     }
     await db.open();
 
     const createTables = `
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT);
+      CREATE TABLE IF NOT EXISTS storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
       
       -- We ensure new installs get the attributes column
-      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, occurred_at TEXT, attributes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
+      CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, occurred_at TEXT, attributes TEXT, review_status TEXT NOT NULL DEFAULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 'approved', 'returned')), submitted_by TEXT, submitted_at TEXT, reviewed_by TEXT, reviewed_at TEXT, review_notes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS trusted_peers (
         peer_id TEXT PRIMARY KEY,
         display_name TEXT NOT NULL,
@@ -86,6 +131,10 @@ export async function initDatabase() {
       );
     `;
     await db.execute(createTables);
+    await db.run(
+      'INSERT OR REPLACE INTO storage_metadata (key, value, updated_at) VALUES (?, ?, ?)',
+      ['storage_encryption', Capacitor.isNativePlatform() ? 'device-bound-native' : 'web-preview-unencrypted', new Date().toISOString()],
+    );
     
     // Live migrations are intentionally additive so existing device-local intelligence remains readable.
     for (const migration of [
@@ -99,6 +148,12 @@ export async function initDatabase() {
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_uri TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_mime_type TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_digest TEXT;',
+      "ALTER TABLE nodes ADD COLUMN review_status TEXT NOT NULL DEFAULT 'not_required' CHECK(review_status IN ('not_required', 'pending', 'approved', 'returned'));",
+      'ALTER TABLE nodes ADD COLUMN submitted_by TEXT;',
+      'ALTER TABLE nodes ADD COLUMN submitted_at TEXT;',
+      'ALTER TABLE nodes ADD COLUMN reviewed_by TEXT;',
+      'ALTER TABLE nodes ADD COLUMN reviewed_at TEXT;',
+      'ALTER TABLE nodes ADD COLUMN review_notes TEXT;',
     ]) {
       try {
         await db.execute(migration);
@@ -113,6 +168,7 @@ export async function initDatabase() {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');

@@ -8,6 +8,7 @@ import { useCaseStore } from '../stores/caseStore';
 import { useAuthStore } from '../stores/authStore';
 import { can } from '../utils/permissions';
 import { buildGraphInsights } from '../utils/graphInsights';
+import { readEncryptedEvidenceMedia } from '../utils/secureMedia';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
 
@@ -32,6 +33,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [editConfidence, setEditConfidence] = useState(3);
   const [editOccurredAt, setEditOccurredAt] = useState('');
   const [editAttributes, setEditAttributes] = useState<{key: string, value: string}[]>([]);
+  const [selectedAttachmentPreview, setSelectedAttachmentPreview] = useState<string | null>(null);
 
   const currentUser = useAuthStore((state) => state.currentUser);
   const activeCase = cases.find(c => c.id === activeCaseId);
@@ -47,7 +49,26 @@ export const GraphWorkspaceScreen: React.FC = () => {
 
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
   const selectedEdge = graphElements.find(e => e.data.id === selectedEdgeId);
+  const canResubmitSelectedNode = Boolean(
+    selectedNode?.data.review_status === 'returned'
+    && selectedNode.data.submitted_by === currentUser?.badge
+    && can(currentUser?.role, 'intelligence:resubmit'),
+  );
+  const canEditSelectedNode = canUpdateIntelligence || canResubmitSelectedNode;
   const getLabelForNode = (id: string) => graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
+
+  useEffect(() => {
+    const evidence = selectedNode?.data.evidence;
+    if (!evidence?.attachmentUri || !evidence.attachmentMimeType.startsWith('image/')) {
+      setSelectedAttachmentPreview(null);
+      return;
+    }
+    let cancelled = false;
+    readEncryptedEvidenceMedia(evidence.attachmentUri)
+      .then((base64) => { if (!cancelled) setSelectedAttachmentPreview(`data:${evidence.attachmentMimeType};base64,${base64}`); })
+      .catch(() => { if (!cancelled) setSelectedAttachmentPreview(Capacitor.convertFileSrc(evidence.attachmentUri)); });
+    return () => { cancelled = true; };
+  }, [selectedNode?.data.evidence?.attachmentMimeType, selectedNode?.data.evidence?.attachmentUri]);
 
   const handleStartConnection = () => { if (selectedNodeId) { setConnectingFromId(selectedNodeId); setSelectedNodeId(null); setIsEditingNode(false); } };
   const handleDeleteNode = () => { if (selectedNodeId && window.confirm('Permanently delete this intelligence node and connections?')) { deleteNode(selectedNodeId); setIsEditingNode(false); } };
@@ -250,6 +271,18 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
             {selectedNode.data.occurred_at && <div className="flex justify-between items-center border-b border-[#252a3a] py-4"><span className="text-[#7880a0] text-xs uppercase font-bold">Observed At</span><span className="text-[#dde1ec] text-xs text-right">{new Date(selectedNode.data.occurred_at).toLocaleString()}</span></div>}
+            {selectedNode.data.review_status && selectedNode.data.review_status !== 'not_required' && (
+              <section className="space-y-2 border-t border-[#f39c12]/40 pt-4 mb-4">
+                <div className="flex justify-between items-center gap-3">
+                  <h4 className="text-[10px] text-[#f39c12] uppercase font-bold tracking-widest">Submission review</h4>
+                  <span className={`text-[9px] px-2 py-1 rounded uppercase font-bold ${selectedNode.data.review_status === 'approved' ? 'bg-[#1d9a6c]/20 text-[#55c987]' : selectedNode.data.review_status === 'returned' ? 'bg-[#c0392b]/20 text-[#ff9d95]' : 'bg-[#f39c12]/20 text-[#f7c86b]'}`}>{selectedNode.data.review_status}</span>
+                </div>
+                {selectedNode.data.submitted_by && <p className="text-[10px] text-[#9aa3bb]">Submitted by <span className="font-mono text-[#dde1ec]">{selectedNode.data.submitted_by}</span>{selectedNode.data.submitted_at ? ` · ${new Date(selectedNode.data.submitted_at).toLocaleString()}` : ''}</p>}
+                {selectedNode.data.reviewed_by && <p className="text-[10px] text-[#9aa3bb]">Decision by <span className="font-mono text-[#dde1ec]">{selectedNode.data.reviewed_by}</span>{selectedNode.data.reviewed_at ? ` · ${new Date(selectedNode.data.reviewed_at).toLocaleString()}` : ''}</p>}
+                {selectedNode.data.review_notes && <div className="rounded border border-[#454d66] bg-[#0c0e14] p-2"><p className="text-[9px] uppercase font-bold text-[#7880a0] mb-1">Supervisor feedback</p><p className="text-xs text-[#dde1ec] whitespace-pre-wrap">{selectedNode.data.review_notes}</p></div>}
+                {canResubmitSelectedNode && <p className="text-[10px] text-[#f7c86b]">Correction is required. Use the edit action below to update and resubmit this observation.</p>}
+              </section>
+            )}
             {selectedNode.data.evidence && (
               <div className="space-y-2 border-t border-[#1a8a4a]/60 pt-4 mb-4">
                 <div className="flex justify-between items-center mb-3">
@@ -264,7 +297,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
                   ['Recorded by', selectedNode.data.evidence.createdBy],
                 ].map(([label, value]) => <div key={label} className="flex justify-between items-start border-b border-[#252a3a]/50 pb-2"><span className="text-xs text-[#7880a0] font-bold">{label}</span><span className="text-xs text-[#dde1ec] text-right ml-4 break-words max-w-[60%] capitalize">{value}</span></div>)}
                 {selectedNode.data.evidence.chainOfCustody && <p className="text-[10px] text-[#9aa3bb] leading-relaxed pt-1">{selectedNode.data.evidence.chainOfCustody}</p>}
-                {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedNode.data.evidence.attachmentMimeType.startsWith('image/') && <img src={Capacitor.convertFileSrc(selectedNode.data.evidence.attachmentUri)} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
+                {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedAttachmentPreview && <img src={selectedAttachmentPreview} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
                 <p className="text-[9px] text-[#7880a0] font-mono break-all">Fingerprint: {selectedNode.data.evidence.fingerprint}</p>
               </div>
             )}
@@ -295,7 +328,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
             {/* 🚀 NEW: Edit Button Grid */}
             <div className="grid grid-cols-2 gap-3 pt-4 pb-4">
               <button onClick={handleStartConnection} disabled={!canCreateIntelligence} className="py-3 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase disabled:opacity-40">Connect</button>
-              <button onClick={handleStartEdit} disabled={!canUpdateIntelligence} className="py-3 bg-[#f39c12] text-white text-xs font-bold rounded uppercase disabled:opacity-40">Edit</button>
+              <button onClick={handleStartEdit} disabled={!canEditSelectedNode} className="py-3 bg-[#f39c12] text-white text-xs font-bold rounded uppercase disabled:opacity-40">{canResubmitSelectedNode ? 'Correct & resubmit' : 'Edit'}</button>
               <button onClick={handleDeleteNode} disabled={!canDeleteIntelligence} className="py-3 border border-[#c0392b] text-[#c0392b] text-xs font-bold rounded uppercase col-span-2 disabled:opacity-40">Delete Node</button>
             </div>
           </div>

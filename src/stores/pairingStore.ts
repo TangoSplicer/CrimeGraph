@@ -3,6 +3,7 @@ import { getDb } from '../capacitor/db';
 import { useAuthStore } from './authStore';
 import { assertPermission } from '../utils/permissions';
 import { appendAuditEntry } from '../utils/auditLedger';
+import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import {
   createPairingInvitation,
   getPairingIdentity,
@@ -135,6 +136,7 @@ export const usePairingStore = create<PairingState>((set, get) => ({
 
   confirmPeerVerification: async (peerId) => {
     assertPairingManager();
+    await requireHighRiskReauthentication('Confirm verified offline device trust');
     const db = await getDb();
     const now = new Date().toISOString();
     const existing = await db.query('SELECT * FROM trusted_peers WHERE peer_id = ? LIMIT 1', [peerId]);
@@ -156,6 +158,7 @@ export const usePairingStore = create<PairingState>((set, get) => ({
 
   revokePeer: async (peerId) => {
     assertPairingManager();
+    await requireHighRiskReauthentication('Revoke offline device trust');
     const db = await getDb();
     const result = await db.query('SELECT display_name FROM trusted_peers WHERE peer_id = ? LIMIT 1', [peerId]);
     const peer = result.values?.[0];

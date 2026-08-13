@@ -15,6 +15,16 @@ const config: CapacitorConfig = {
       splashFullScreen: true,
       splashImmersive: true,
     },
+    CapacitorSQLite: {
+      androidIsEncryption: true,
+      androidBiometric: {
+        biometricAuth: false,
+        biometricTitle: 'Unlock protected CrimeGraph storage',
+        biometricSubTitle: 'Authenticate to access encrypted local intelligence',
+      },
+      iosIsEncryption: true,
+      iosKeychainPrefix: 'com.crimegraph.app',
+    },
   },
 };
 

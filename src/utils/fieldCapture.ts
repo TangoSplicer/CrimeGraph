@@ -1,5 +1,5 @@
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
-import { Directory, Filesystem } from '@capacitor/filesystem';
+import { writeEncryptedEvidenceMedia } from './secureMedia';
 
 export interface CapturedEvidenceAttachment {
   attachmentName: string;
@@ -29,15 +29,10 @@ export const captureEvidencePhoto = async (caseId: string): Promise<CapturedEvid
   const format = photo.format === 'png' ? 'png' : 'jpeg';
   const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
   const attachmentName = `capture_${new Date().toISOString().replace(/[:.]/g, '-')}_${window.crypto.randomUUID?.() || Date.now()}.${format}`;
-  const result = await Filesystem.writeFile({
-    path: `evidence/${caseId}/${attachmentName}`,
-    data: photo.base64String,
-    directory: Directory.Data,
-    recursive: true,
-  });
+  const encryptedUri = await writeEncryptedEvidenceMedia(caseId, attachmentName, photo.base64String);
   return {
     attachmentName,
-    attachmentUri: result.uri,
+    attachmentUri: encryptedUri,
     attachmentMimeType: mimeType,
     attachmentDigest: await sha256Hex(base64ToBytes(photo.base64String)),
   };

@@ -37,6 +37,7 @@ export const AddNodeScreen: React.FC = () => {
   const addNode = useCaseStore((state) => state.addNode);
   const activeCaseId = useCaseStore((state) => state.activeCaseId);
   const currentUser = useAuthStore((state) => state.currentUser);
+  const isFieldOperator = currentUser?.role === 'field';
   
   const [selectedType, setSelectedType] = useState('person');
   const [label, setLabel] = useState('');
@@ -119,6 +120,7 @@ export const AddNodeScreen: React.FC = () => {
 
       {/* The form container handles all the scrolling natively now */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {isFieldOperator && <div className="border border-[#f39c12]/50 bg-[#f39c12]/10 rounded-lg p-3"><p className="text-xs font-bold text-[#f7c86b] uppercase tracking-wide">Field submission protocol</p><p className="mt-1 text-[10px] text-[#dde1ec]">This observation will be marked <strong>pending review</strong> after submission. Any return-for-correction comment will be visible in the graph workspace.</p></div>}
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-3 tracking-wider">Entity Type</label>
           <div className="grid grid-cols-2 gap-3">
@@ -206,7 +208,7 @@ export const AddNodeScreen: React.FC = () => {
         {/* 🚀 THE FIX: Button moved inside the scroll flow */}
         <div className="pt-6 pb-8">
           <button onClick={handleSubmit} disabled={!label.trim()} className="w-full py-4 bg-[#3a7bd5] hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] text-white font-bold rounded text-lg transition-colors shadow-[0_0_15px_rgba(58,123,213,0.3)] disabled:shadow-none">
-            Deploy Node
+            {isFieldOperator ? 'Submit for supervisor review' : 'Deploy Node'}
           </button>
         </div>
       </div>

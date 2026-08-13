@@ -41,10 +41,7 @@ export function buildGraphInsights(elements: GraphElement[], notes: IntelNote[])
     .sort((left, right) => right.connections - left.connections || left.label.localeCompare(right.label));
 
   const evidenceNodes = nodes.filter((node) => node.data.type === 'evidence');
-  const evidenceRequiringReview = evidenceNodes.filter((node) => {
-    const status = node.data.evidence?.verificationStatus;
-    return !status || status === 'unverified' || status === 'disputed';
-  }).length;
+  const evidenceRequiringReview = nodes.filter((node) => node.data.review_status === 'pending').length;
   const evidenceWithoutCustody = evidenceNodes.filter((node) => !node.data.evidence?.chainOfCustody).length;
 
   return {

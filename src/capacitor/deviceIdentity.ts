@@ -2,6 +2,8 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface NativeDeviceIdentityPlugin {
   getPublicIdentity(): Promise<{ deviceId: string; publicKey: string; fingerprint: string }>;
+  getStorageSecret(): Promise<{ secret: string }>;
+  destroyStorageSecret(): Promise<void>;
   sign(options: { payload: string }): Promise<{ signature: string }>;
   verify(options: { publicKey: string; payload: string; signature: string }): Promise<{ verified: boolean }>;
 }
@@ -27,6 +29,18 @@ export const getDeviceIdentity = async (): Promise<DeviceIdentity> => {
     throw new Error('The device identity could not be established.');
   }
   return identity;
+};
+
+export const getDeviceStorageSecret = async (): Promise<string> => {
+  assertNativeIdentitySupport();
+  const result = await NativeDeviceIdentity.getStorageSecret();
+  if (!result.secret || !/^[A-Za-z0-9+/=]{32,}$/.test(result.secret)) throw new Error('The device storage secret is unavailable.');
+  return result.secret;
+};
+
+export const destroyDeviceStorageSecret = async (): Promise<void> => {
+  assertNativeIdentitySupport();
+  await NativeDeviceIdentity.destroyStorageSecret();
 };
 
 export const signWithDeviceIdentity = async (payload: string): Promise<string> => {

@@ -1,11 +1,36 @@
 import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, CapacitorSQLitePlugin } from '@capacitor-community/sqlite';
 import { defineCustomElements } from 'jeep-sqlite/loader';
+import { getDeviceStorageSecret } from './deviceIdentity';
 
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
 let dbInstance: any = null;
 let webStoreReady: Promise<void> | null = null;
+const DATABASE_NAME = 'crimegraph_db';
+
+interface DatabaseSecurityMode {
+  encrypted: boolean;
+  mode: 'no-encryption' | 'encryption' | 'secret';
+}
+
+const prepareDatabaseSecurity = async (): Promise<DatabaseSecurityMode> => {
+  if (!Capacitor.isNativePlatform()) return { encrypted: false, mode: 'no-encryption' };
+
+  const storageSecret = await getDeviceStorageSecret();
+  const hasStoredSecret = await sqliteConnection.isSecretStored();
+  if (!hasStoredSecret.result) {
+    await sqliteConnection.setEncryptionSecret(storageSecret);
+  } else {
+    const secretMatches = await sqliteConnection.checkEncryptionSecret(storageSecret);
+    if (!secretMatches.result) throw new Error('Protected local storage cannot be unlocked with this device identity.');
+  }
+
+  const databaseExists = await sqliteConnection.isDatabase(DATABASE_NAME);
+  if (!databaseExists.result) return { encrypted: true, mode: 'encryption' };
+  const isEncrypted = await sqliteConnection.isDatabaseEncrypted(DATABASE_NAME);
+  return { encrypted: true, mode: isEncrypted.result ? 'secret' : 'encryption' };
+};
 
 const initialiseWebStore = async (): Promise<void> => {
   if (Capacitor.getPlatform() !== 'web') return;
@@ -32,17 +57,19 @@ export async function getDb() {
 export async function initDatabase() {
   try {
     await initialiseWebStore();
-    const isConn = await sqliteConnection.isConnection('crimegraph_db', false);
+    const securityMode = await prepareDatabaseSecurity();
+    const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
     let db;
     if (isConn.result) {
-      db = await sqliteConnection.retrieveConnection('crimegraph_db', false);
+      db = await sqliteConnection.retrieveConnection(DATABASE_NAME, false);
     } else {
-      db = await sqliteConnection.createConnection('crimegraph_db', false, 'no-encryption', 1, false);
+      db = await sqliteConnection.createConnection(DATABASE_NAME, securityMode.encrypted, securityMode.mode, 1, false);
     }
     await db.open();
 
     const createTables = `
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT);
+      CREATE TABLE IF NOT EXISTS storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
@@ -86,6 +113,10 @@ export async function initDatabase() {
       );
     `;
     await db.execute(createTables);
+    await db.run(
+      'INSERT OR REPLACE INTO storage_metadata (key, value, updated_at) VALUES (?, ?, ?)',
+      ['storage_encryption', Capacitor.isNativePlatform() ? 'device-bound-native' : 'web-preview-unencrypted', new Date().toISOString()],
+    );
     
     // Live migrations are intentionally additive so existing device-local intelligence remains readable.
     for (const migration of [

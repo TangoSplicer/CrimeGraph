@@ -8,6 +8,7 @@ import { useCaseStore } from '../stores/caseStore';
 import { useAuthStore } from '../stores/authStore';
 import { can } from '../utils/permissions';
 import { buildGraphInsights } from '../utils/graphInsights';
+import { readEncryptedEvidenceMedia } from '../utils/secureMedia';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
 
@@ -32,6 +33,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [editConfidence, setEditConfidence] = useState(3);
   const [editOccurredAt, setEditOccurredAt] = useState('');
   const [editAttributes, setEditAttributes] = useState<{key: string, value: string}[]>([]);
+  const [selectedAttachmentPreview, setSelectedAttachmentPreview] = useState<string | null>(null);
 
   const currentUser = useAuthStore((state) => state.currentUser);
   const activeCase = cases.find(c => c.id === activeCaseId);
@@ -48,6 +50,19 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const selectedNode = graphElements.find(e => e.data.id === selectedNodeId);
   const selectedEdge = graphElements.find(e => e.data.id === selectedEdgeId);
   const getLabelForNode = (id: string) => graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
+
+  useEffect(() => {
+    const evidence = selectedNode?.data.evidence;
+    if (!evidence?.attachmentUri || !evidence.attachmentMimeType.startsWith('image/')) {
+      setSelectedAttachmentPreview(null);
+      return;
+    }
+    let cancelled = false;
+    readEncryptedEvidenceMedia(evidence.attachmentUri)
+      .then((base64) => { if (!cancelled) setSelectedAttachmentPreview(`data:${evidence.attachmentMimeType};base64,${base64}`); })
+      .catch(() => { if (!cancelled) setSelectedAttachmentPreview(Capacitor.convertFileSrc(evidence.attachmentUri)); });
+    return () => { cancelled = true; };
+  }, [selectedNode?.data.evidence?.attachmentMimeType, selectedNode?.data.evidence?.attachmentUri]);
 
   const handleStartConnection = () => { if (selectedNodeId) { setConnectingFromId(selectedNodeId); setSelectedNodeId(null); setIsEditingNode(false); } };
   const handleDeleteNode = () => { if (selectedNodeId && window.confirm('Permanently delete this intelligence node and connections?')) { deleteNode(selectedNodeId); setIsEditingNode(false); } };
@@ -264,7 +279,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
                   ['Recorded by', selectedNode.data.evidence.createdBy],
                 ].map(([label, value]) => <div key={label} className="flex justify-between items-start border-b border-[#252a3a]/50 pb-2"><span className="text-xs text-[#7880a0] font-bold">{label}</span><span className="text-xs text-[#dde1ec] text-right ml-4 break-words max-w-[60%] capitalize">{value}</span></div>)}
                 {selectedNode.data.evidence.chainOfCustody && <p className="text-[10px] text-[#9aa3bb] leading-relaxed pt-1">{selectedNode.data.evidence.chainOfCustody}</p>}
-                {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedNode.data.evidence.attachmentMimeType.startsWith('image/') && <img src={Capacitor.convertFileSrc(selectedNode.data.evidence.attachmentUri)} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
+                {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedAttachmentPreview && <img src={selectedAttachmentPreview} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
                 <p className="text-[9px] text-[#7880a0] font-mono break-all">Fingerprint: {selectedNode.data.evidence.fingerprint}</p>
               </div>
             )}

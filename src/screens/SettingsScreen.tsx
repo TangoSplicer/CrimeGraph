@@ -2,13 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { useCaseStore } from '../stores/caseStore';
 import { useSyncStore } from '../stores/syncStore';
-import { USER_ROLES, type UserRole } from '../utils/permissions';
+import { can, USER_ROLES, type UserRole } from '../utils/permissions';
+import { usePairingStore } from '../stores/pairingStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, logout, addOperator } = useAuthStore();
   const { wipeDatabase, auditLogs, auditVerification, loadAuditLogs } = useCaseStore();
   
+  const {
+    deviceIdentity,
+    peers: trustedPeers,
+    pendingVerification,
+    loadIdentity,
+    loadPeers,
+    createInvitation,
+    importInvitation,
+    confirmPeerVerification,
+    revokePeer,
+    clearPendingVerification,
+  } = usePairingStore();
+  const canManagePairing = can(currentUser?.role, 'pairing:manage');
+
   const { 
     isScanning, 
     isHardwareReady, 
@@ -25,12 +40,22 @@ export const SettingsScreen: React.FC = () => {
   const [newRole, setNewRole] = useState<Exclude<UserRole, 'admin'>>('analyst');
   const [adminMsg, setAdminMsg] = useState('');
   const [auditFilter, setAuditFilter] = useState('');
+  const [pairingDeviceName, setPairingDeviceName] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
+  const [receivedPairingCode, setReceivedPairingCode] = useState('');
+  const [pairingMsg, setPairingMsg] = useState('');
 
   useEffect(() => {
     if (currentUser?.role === 'admin') {
       loadAuditLogs();
     }
   }, [currentUser, loadAuditLogs]);
+
+  useEffect(() => {
+    if (!canManagePairing) return;
+    loadPeers().catch((error) => setPairingMsg(error instanceof Error ? error.message : 'Peer trust registry is unavailable.'));
+    loadIdentity().catch((error) => setPairingMsg(error instanceof Error ? error.message : 'Secure device identity is unavailable.'));
+  }, [canManagePairing, loadIdentity, loadPeers]);
 
   const handleWipe = async () => {
     if (window.confirm("CRITICAL WARNING: This will permanently destroy all local intelligence. Proceed?")) {
@@ -49,6 +74,48 @@ export const SettingsScreen: React.FC = () => {
       setNewBadge(''); setNewName(''); setNewPin(''); setNewRole('analyst');
     } catch (err) {
       setAdminMsg('Failed to add user. Badge may already exist.');
+    }
+  };
+
+  const handleCreatePairingCode = async () => {
+    try {
+      const invitation = await createInvitation(pairingDeviceName || `${currentUser?.name || 'CrimeGraph'} device`);
+      setPairingCode(invitation.code);
+      setPairingMsg(`Pairing code created. It expires at ${new Date(invitation.expiresAt).toLocaleTimeString()}. Share it only with the intended device.`);
+    } catch (error) {
+      setPairingMsg(error instanceof Error ? error.message : 'Could not create a pairing code.');
+    }
+  };
+
+  const handleImportPairingCode = async () => {
+    try {
+      const pending = await importInvitation(receivedPairingCode);
+      setReceivedPairingCode('');
+      setPairingMsg(`Signature verified. Compare the displayed short authentication code in person before confirming ${pending.peer.display_name}.`);
+      await loadPeers();
+    } catch (error) {
+      setPairingMsg(error instanceof Error ? error.message : 'Could not import the pairing code.');
+    }
+  };
+
+  const handleConfirmPeer = async (peerId: string) => {
+    try {
+      await confirmPeerVerification(peerId);
+      await loadPeers();
+      setPairingMsg('Peer verified. Case transfer remains disabled until a separately approved secure session protocol is implemented.');
+    } catch (error) {
+      setPairingMsg(error instanceof Error ? error.message : 'Could not verify the peer.');
+    }
+  };
+
+  const handleRevokePeer = async (peerId: string) => {
+    if (!window.confirm('Revoke local trust for this device? This prevents it from being used by a future secure session.')) return;
+    try {
+      await revokePeer(peerId);
+      await loadPeers();
+      setPairingMsg('Peer trust revoked locally.');
+    } catch (error) {
+      setPairingMsg(error instanceof Error ? error.message : 'Could not revoke the peer.');
     }
   };
 
@@ -121,6 +188,62 @@ export const SettingsScreen: React.FC = () => {
             </div>
           )}
         </section>
+
+        {canManagePairing && (
+          <section className="bg-[#1c2030] border border-[#7c4dbb] rounded-lg p-4">
+            <div className="flex justify-between items-end border-b border-[#7c4dbb]/30 pb-2 mb-4">
+              <h2 className="text-xs font-bold text-[#b893e6] uppercase tracking-widest">Verified Offline Pairing</h2>
+              <span className="text-[9px] px-2 py-1 rounded bg-[#7c4dbb]/20 text-[#b893e6]">NO TRANSFER</span>
+            </div>
+            <p className="text-[10px] text-[#7880a0] leading-relaxed mb-3">Pairing stores a verified device identity locally. It does not send or receive intelligence. Compare the short authentication code in person before confirming a peer.</p>
+            {deviceIdentity ? (
+              <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-3 mb-4">
+                <p className="text-[9px] uppercase text-[#7880a0]">This device fingerprint</p>
+                <p className="font-mono text-[10px] text-[#dde1ec] break-all mt-1">{deviceIdentity.fingerprint.match(/.{1,4}/g)?.join('-')}</p>
+              </div>
+            ) : <p className="text-[10px] text-[#f39c12] mb-4">A secure device identity is available only in the installed Android app.</p>}
+
+            <div className="space-y-2 border-t border-[#252a3a] pt-4">
+              <p className="text-[10px] font-bold text-[#dde1ec] uppercase">1. Create a pairing code</p>
+              <input value={pairingDeviceName} onChange={(e) => setPairingDeviceName(e.target.value)} maxLength={64} placeholder="DEVICE NAME (e.g. Field handset A)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#7c4dbb] focus:outline-none" />
+              <button onClick={handleCreatePairingCode} disabled={!deviceIdentity} className="w-full py-3 bg-[#7c4dbb] text-white rounded text-xs font-bold uppercase disabled:opacity-40">Create 10-minute pairing code</button>
+              {pairingCode && <textarea readOnly value={pairingCode} className="w-full h-20 bg-[#0c0e14] border border-[#252a3a] rounded p-2 text-[9px] text-[#dde1ec] font-mono break-all" aria-label="Generated pairing code" />}
+            </div>
+
+            <div className="space-y-2 border-t border-[#252a3a] pt-4 mt-4">
+              <p className="text-[10px] font-bold text-[#dde1ec] uppercase">2. Inspect a peer pairing code</p>
+              <textarea value={receivedPairingCode} onChange={(e) => setReceivedPairingCode(e.target.value)} placeholder="PASTE PEER PAIRING CODE" className="w-full h-20 bg-[#0c0e14] border border-[#252a3a] rounded p-2 text-[9px] text-white font-mono focus:border-[#7c4dbb] focus:outline-none" />
+              <button onClick={handleImportPairingCode} disabled={!deviceIdentity || !receivedPairingCode.trim()} className="w-full py-3 border border-[#b893e6] text-[#b893e6] rounded text-xs font-bold uppercase disabled:opacity-40">Verify signed invitation</button>
+            </div>
+
+            {pendingVerification && (
+              <div className="mt-4 bg-[#7c4dbb]/10 border border-[#7c4dbb] rounded p-3">
+                <p className="text-[10px] text-[#b893e6] uppercase font-bold">3. Compare in person before trust</p>
+                <p className="text-xs text-[#dde1ec] mt-2">Peer: <strong>{pendingVerification.peer.display_name}</strong></p>
+                <p className="font-mono text-lg tracking-widest text-white mt-2">{pendingVerification.shortAuthenticationCode}</p>
+                <p className="text-[10px] text-[#7880a0] mt-2">Only mark verified if this exact code appears on both devices while the responsible operators are present.</p>
+                <div className="flex space-x-2 mt-3">
+                  <button onClick={() => handleConfirmPeer(pendingVerification.peer.peer_id)} disabled={pendingVerification.peer.status === 'revoked'} className="flex-1 py-2 bg-[#2ecc71] text-[#0c0e14] rounded text-[10px] font-bold uppercase disabled:opacity-40">Mark verified</button>
+                  <button onClick={clearPendingVerification} className="flex-1 py-2 border border-[#454d66] text-[#dde1ec] rounded text-[10px] font-bold uppercase">Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {trustedPeers.length > 0 && (
+              <div className="mt-4 border-t border-[#252a3a] pt-4 space-y-2">
+                <p className="text-[10px] font-bold text-[#7880a0] uppercase">Local peer trust registry</p>
+                {trustedPeers.map((peer) => (
+                  <div key={peer.peer_id} className="bg-[#0c0e14] border border-[#252a3a] rounded p-3">
+                    <div className="flex justify-between gap-3"><span className="text-xs text-[#dde1ec] font-bold truncate">{peer.display_name}</span><span className={`text-[9px] uppercase ${peer.status === 'verified' ? 'text-[#2ecc71]' : peer.status === 'revoked' ? 'text-[#e74c3c]' : 'text-[#f39c12]'}`}>{peer.status}</span></div>
+                    <p className="font-mono text-[9px] text-[#7880a0] break-all mt-1">{peer.fingerprint.match(/.{1,4}/g)?.join('-')}</p>
+                    {peer.status !== 'revoked' && <button onClick={() => handleRevokePeer(peer.peer_id)} className="mt-2 text-[9px] text-[#e74c3c] uppercase font-bold">Revoke local trust</button>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {pairingMsg && <p className="text-[10px] text-[#b893e6] mt-4 leading-relaxed">{pairingMsg}</p>}
+          </section>
+        )}
 
         {/* Master Admin Controls */}
         {currentUser?.role === 'admin' && (

@@ -47,6 +47,19 @@ CREATE TABLE IF NOT EXISTS edges (
   FOREIGN KEY(case_id) REFERENCES cases(id)
 );
 
+CREATE TABLE IF NOT EXISTS trusted_peers (
+  peer_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'verified', 'revoked')),
+  invitation_expires_at TEXT NOT NULL,
+  paired_at TEXT NOT NULL,
+  verified_at TEXT,
+  last_seen_at TEXT,
+  notes TEXT
+);
+
 CREATE TABLE IF NOT EXISTS evidence_provenance (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL,
@@ -91,5 +104,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);
+CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);

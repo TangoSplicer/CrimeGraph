@@ -49,6 +49,18 @@ export async function initDatabase() {
       
       -- We ensure new installs get the attributes column
       CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, label TEXT NOT NULL, type TEXT NOT NULL, confidence INTEGER DEFAULT 3, created_at TEXT NOT NULL, occurred_at TEXT, attributes TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
+      CREATE TABLE IF NOT EXISTS trusted_peers (
+        peer_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        fingerprint TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'verified', 'revoked')),
+        invitation_expires_at TEXT NOT NULL,
+        paired_at TEXT NOT NULL,
+        verified_at TEXT,
+        last_seen_at TEXT,
+        notes TEXT
+      );
       CREATE TABLE IF NOT EXISTS evidence_provenance (
         id TEXT PRIMARY KEY,
         case_id TEXT NOT NULL,
@@ -96,6 +108,7 @@ export async function initDatabase() {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);');
     } catch (indexError) {
       console.warn('Database index creation skipped.', indexError);
     }

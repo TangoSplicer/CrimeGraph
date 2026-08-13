@@ -25,17 +25,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Verify authorization and evidence rules
-        run: npm run test
+      - name: Verify application integrity and core rules
+        run: npm run verify
 
-      - name: Build intelligence frontend
-        run: npm run build
+      - name: Audit production dependency surface
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Sync native bridge
         run: npx cap sync android
@@ -44,8 +44,14 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: zulu
-          java-version: '17'
+          java-version: '21'
           cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
 
       - name: Compile Android debug APK
         working-directory: ./android

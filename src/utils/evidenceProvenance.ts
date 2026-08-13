@@ -15,6 +15,10 @@ export interface EvidenceProvenanceInput {
   handlingStatus?: EvidenceHandlingStatus;
   verificationStatus?: EvidenceVerificationStatus;
   chainOfCustody?: string;
+  attachmentName?: string;
+  attachmentUri?: string;
+  attachmentMimeType?: string;
+  attachmentDigest?: string;
 }
 
 export interface EvidenceProvenance extends Required<EvidenceProvenanceInput> {
@@ -42,6 +46,10 @@ export const normaliseEvidenceProvenance = (input: EvidenceProvenanceInput = {})
   handlingStatus: inSet(input.handlingStatus, EVIDENCE_HANDLING_STATUSES, 'recorded'),
   verificationStatus: inSet(input.verificationStatus, EVIDENCE_VERIFICATION_STATUSES, 'unverified'),
   chainOfCustody: clean(input.chainOfCustody, 2000),
+  attachmentName: clean(input.attachmentName, 160),
+  attachmentUri: clean(input.attachmentUri, 2048),
+  attachmentMimeType: clean(input.attachmentMimeType, 100),
+  attachmentDigest: clean(input.attachmentDigest, 128).toUpperCase(),
 });
 
 export const validateEvidenceProvenance = (input: Required<EvidenceProvenanceInput>): void => {
@@ -49,6 +57,9 @@ export const validateEvidenceProvenance = (input: Required<EvidenceProvenanceInp
   if (!input.sourceReference) throw new Error('Evidence requires a source reference.');
   if (!input.acquiredAt || Number.isNaN(Date.parse(input.acquiredAt))) throw new Error('Evidence requires a valid acquisition date and time.');
   if (!input.acquiredBy) throw new Error('Evidence requires the acquiring operator or source.');
+  const attachmentFields = [input.attachmentName, input.attachmentUri, input.attachmentMimeType, input.attachmentDigest];
+  if (attachmentFields.some(Boolean) && attachmentFields.some((value) => !value)) throw new Error('Captured media must include its name, local URI, media type, and integrity digest.');
+  if (input.attachmentDigest && !/^[A-F0-9]{64}$/.test(input.attachmentDigest)) throw new Error('Captured media has an invalid integrity digest.');
 };
 
 const toBase64 = (bytes: Uint8Array): string => {
@@ -61,6 +72,7 @@ export const createEvidenceFingerprint = async (input: Required<EvidenceProvenan
   const digest = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([
     input.exhibitNumber, input.sourceType, input.sourceReference, input.acquiredAt, input.acquiredBy,
     input.handlingStatus, input.verificationStatus, input.chainOfCustody,
+    input.attachmentName, input.attachmentUri, input.attachmentMimeType, input.attachmentDigest,
   ])));
   return toBase64(new Uint8Array(digest));
 };

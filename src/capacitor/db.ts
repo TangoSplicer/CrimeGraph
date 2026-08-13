@@ -74,6 +74,10 @@ export async function initDatabase() {
         verification_status TEXT NOT NULL,
         chain_of_custody TEXT NOT NULL,
         fingerprint TEXT NOT NULL,
+        attachment_name TEXT,
+        attachment_uri TEXT,
+        attachment_mime_type TEXT,
+        attachment_digest TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         created_by TEXT NOT NULL,
@@ -91,6 +95,10 @@ export async function initDatabase() {
       'ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT;',
       'ALTER TABLE users ADD COLUMN biometric_enabled INTEGER DEFAULT 0;',
       'ALTER TABLE users ADD COLUMN last_login TEXT;',
+      'ALTER TABLE evidence_provenance ADD COLUMN attachment_name TEXT;',
+      'ALTER TABLE evidence_provenance ADD COLUMN attachment_uri TEXT;',
+      'ALTER TABLE evidence_provenance ADD COLUMN attachment_mime_type TEXT;',
+      'ALTER TABLE evidence_provenance ADD COLUMN attachment_digest TEXT;',
     ]) {
       try {
         await db.execute(migration);

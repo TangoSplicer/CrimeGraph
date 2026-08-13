@@ -221,6 +221,10 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       handlingStatus: record.handling_status,
       verificationStatus: record.verification_status,
       chainOfCustody: record.chain_of_custody,
+      attachmentName: record.attachment_name || '',
+      attachmentUri: record.attachment_uri || '',
+      attachmentMimeType: record.attachment_mime_type || '',
+      attachmentDigest: record.attachment_digest || '',
       fingerprint: record.fingerprint,
       createdAt: record.created_at,
       updatedAt: record.updated_at,
@@ -271,12 +275,13 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           createdBy: currentOperator(),
         };
         await db.run(
-          `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, created_at, updated_at, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, attachment_name, attachment_uri, attachment_mime_type, attachment_digest, created_at, updated_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             evidenceRecord.id, evidenceRecord.caseId, evidenceRecord.nodeId, evidenceRecord.exhibitNumber,
             evidenceRecord.sourceType, evidenceRecord.sourceReference, evidenceRecord.acquiredAt, evidenceRecord.acquiredBy,
             evidenceRecord.handlingStatus, evidenceRecord.verificationStatus, evidenceRecord.chainOfCustody, evidenceRecord.fingerprint,
+            evidenceRecord.attachmentName, evidenceRecord.attachmentUri, evidenceRecord.attachmentMimeType, evidenceRecord.attachmentDigest,
             evidenceRecord.createdAt, evidenceRecord.updatedAt, evidenceRecord.createdBy,
           ],
         );
@@ -446,13 +451,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           const createdAt = typeof (data.evidence as Record<string, unknown>).createdAt === 'string' ? String((data.evidence as Record<string, unknown>).createdAt).slice(0, 40) : now;
           const updatedAt = typeof (data.evidence as Record<string, unknown>).updatedAt === 'string' ? String((data.evidence as Record<string, unknown>).updatedAt).slice(0, 40) : now;
           await db.run(
-            `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, created_at, updated_at, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, attachment_name, attachment_uri, attachment_mime_type, attachment_digest, created_at, updated_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               provenanceId, newCaseId, newNodeId, importedEvidence.exhibitNumber, importedEvidence.sourceType,
               importedEvidence.sourceReference, importedEvidence.acquiredAt, importedEvidence.acquiredBy,
               importedEvidence.handlingStatus, importedEvidence.verificationStatus, importedEvidence.chainOfCustody,
-              await createEvidenceFingerprint(importedEvidence), createdAt, updatedAt,
+              await createEvidenceFingerprint(importedEvidence), importedEvidence.attachmentName, importedEvidence.attachmentUri,
+              importedEvidence.attachmentMimeType, importedEvidence.attachmentDigest, createdAt, updatedAt,
               typeof (data.evidence as Record<string, unknown>).createdBy === 'string' ? String((data.evidence as Record<string, unknown>).createdBy).slice(0, 120) : 'IMPORTED_PACKAGE',
             ],
           );

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCaseStore } from '../stores/caseStore';
+import { useAuthStore } from '../stores/authStore';
+import { captureEvidencePhoto } from '../utils/fieldCapture';
 import {
   EVIDENCE_HANDLING_STATUSES,
   EVIDENCE_SOURCE_TYPES,
@@ -33,6 +35,8 @@ const metadataTemplates: Record<string, string[]> = {
 export const AddNodeScreen: React.FC = () => {
   const navigate = useNavigate();
   const addNode = useCaseStore((state) => state.addNode);
+  const activeCaseId = useCaseStore((state) => state.activeCaseId);
+  const currentUser = useAuthStore((state) => state.currentUser);
   
   const [selectedType, setSelectedType] = useState('person');
   const [label, setLabel] = useState('');
@@ -48,7 +52,13 @@ export const AddNodeScreen: React.FC = () => {
     handlingStatus: 'recorded',
     verificationStatus: 'unverified',
     chainOfCustody: '',
+    attachmentName: '',
+    attachmentUri: '',
+    attachmentMimeType: '',
+    attachmentDigest: '',
   });
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureMessage, setCaptureMessage] = useState('');
 
   useEffect(() => {
     const templateKeys = metadataTemplates[selectedType] || [];
@@ -62,6 +72,30 @@ export const AddNodeScreen: React.FC = () => {
     setAttributes(newAttrs);
   };
   const handleRemoveAttribute = (index: number) => setAttributes(attributes.filter((_, i) => i !== index));
+
+  const handleCapturePhoto = async () => {
+    try {
+      setIsCapturing(true);
+      setCaptureMessage('');
+      const attachment = await captureEvidencePhoto(activeCaseId || '');
+      setEvidence({
+        ...evidence,
+        ...attachment,
+        sourceType: 'digital',
+        sourceReference: evidence.sourceReference || 'Device camera capture',
+        acquiredAt: evidence.acquiredAt || new Date().toISOString().slice(0, 16),
+        acquiredBy: evidence.acquiredBy || currentUser?.badge || '',
+        handlingStatus: 'secured',
+        chainOfCustody: evidence.chainOfCustody || `Captured on-device by ${currentUser?.badge || 'operator'}; SHA-256 recorded with provenance.`,
+      });
+      if (!label.trim()) setLabel(`Field photo ${new Date().toLocaleString()}`);
+      setCaptureMessage(`Captured ${attachment.attachmentName}; its SHA-256 digest is bound to this evidence record.`);
+    } catch (error) {
+      setCaptureMessage(error instanceof Error ? error.message : 'The field capture could not be completed.');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,6 +176,12 @@ export const AddNodeScreen: React.FC = () => {
               </select>
             </div>
             <textarea value={evidence.chainOfCustody} onChange={e => setEvidence({ ...evidence, chainOfCustody: e.target.value })} placeholder="Chain of custody / handling notes" className="w-full h-20 bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" />
+            <div className="border-t border-[#1a8a4a]/40 pt-3">
+              <p className="text-[10px] text-[#9aa3bb] mb-2">Field media is saved to app-private storage and its SHA-256 digest is included in this evidence record.</p>
+              <button type="button" onClick={handleCapturePhoto} disabled={isCapturing} className="w-full py-3 border border-[#55c987] text-[#55c987] rounded text-xs font-bold uppercase disabled:opacity-40">{isCapturing ? 'Capturing media…' : 'Capture or attach field photo'}</button>
+              {evidence.attachmentDigest && <div className="mt-3 bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[10px] text-[#dde1ec] truncate">{evidence.attachmentName}</p><p className="font-mono text-[9px] text-[#55c987] break-all mt-1">SHA-256: {evidence.attachmentDigest}</p></div>}
+              {captureMessage && <p className="text-[10px] text-[#55c987] mt-2 leading-relaxed">{captureMessage}</p>}
+            </div>
           </section>
         )}
 

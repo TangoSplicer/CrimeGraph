@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { GraphCanvas } from '../components/graph/GraphCanvas';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { BottomSheet } from '../components/shared/BottomSheet';
@@ -263,6 +264,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
                   ['Recorded by', selectedNode.data.evidence.createdBy],
                 ].map(([label, value]) => <div key={label} className="flex justify-between items-start border-b border-[#252a3a]/50 pb-2"><span className="text-xs text-[#7880a0] font-bold">{label}</span><span className="text-xs text-[#dde1ec] text-right ml-4 break-words max-w-[60%] capitalize">{value}</span></div>)}
                 {selectedNode.data.evidence.chainOfCustody && <p className="text-[10px] text-[#9aa3bb] leading-relaxed pt-1">{selectedNode.data.evidence.chainOfCustody}</p>}
+                {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedNode.data.evidence.attachmentMimeType.startsWith('image/') && <img src={Capacitor.convertFileSrc(selectedNode.data.evidence.attachmentUri)} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
                 <p className="text-[9px] text-[#7880a0] font-mono break-all">Fingerprint: {selectedNode.data.evidence.fingerprint}</p>
               </div>
             )}

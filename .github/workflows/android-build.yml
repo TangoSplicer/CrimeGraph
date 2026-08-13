@@ -31,6 +31,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Verify authorization and evidence rules
+        run: npm run test
+
       - name: Build intelligence frontend
         run: npm run build
 

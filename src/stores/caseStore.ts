@@ -1,9 +1,11 @@
 import { create } from 'zustand';
+import { Capacitor } from '@capacitor/core';
 import { getDb } from '../capacitor/db';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 import { decryptPackage, encryptPackage } from '../capacitor/crypto';
+import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
 import { assertPermission } from '../utils/permissions';
 import {
@@ -142,6 +144,29 @@ const withTransaction = async <T>(db: any, operation: () => Promise<T>): Promise
   }
 };
 
+const migrateLegacyEvidenceAttachments = async (db: any, records: any[]): Promise<void> => {
+  if (!Capacitor.isNativePlatform()) return;
+  for (const record of records) {
+    const legacyUri = String(record.attachment_uri || '');
+    if (!legacyUri || legacyUri.endsWith('.cgm')) continue;
+    try {
+      const legacyFile = await Filesystem.readFile({ path: legacyUri });
+      if (typeof legacyFile.data !== 'string') continue;
+      const encryptedUri = await writeEncryptedEvidenceMedia(String(record.case_id), String(record.attachment_name), legacyFile.data);
+      const now = new Date().toISOString();
+      await withTransaction(db, async () => {
+        await db.run('UPDATE evidence_provenance SET attachment_uri = ?, updated_at = ? WHERE id = ?', [encryptedUri, now, record.id]);
+        await appendAuditEntry(db, 'MIGRATE_EVIDENCE_MEDIA', String(record.id), `Migrated legacy attachment ${String(record.attachment_name)} to encrypted device storage.`, currentOperator());
+      });
+      record.attachment_uri = encryptedUri;
+      record.updated_at = now;
+      try { await Filesystem.deleteFile({ path: legacyUri }); } catch { /* The DB now references the protected copy; retain an inaccessible legacy file if deletion fails. */ }
+    } catch (error) {
+      console.warn('Legacy evidence attachment migration deferred.', error);
+    }
+  }
+};
+
 export const useCaseStore = create<CaseState>((set, get) => ({
   cases: [],
   activeCaseId: null,
@@ -209,7 +234,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const nodesResponse = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
     const edgesResponse = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
     const evidenceResponse = await db.query('SELECT * FROM evidence_provenance WHERE case_id = ?', [caseId]);
-    const evidenceByNodeId = new Map<string, EvidenceProvenance>((evidenceResponse.values || []).map((record: any) => [record.node_id, {
+    const evidenceRecords = evidenceResponse.values || [];
+    await migrateLegacyEvidenceAttachments(db, evidenceRecords);
+    const evidenceByNodeId = new Map<string, EvidenceProvenance>(evidenceRecords.map((record: any) => [record.node_id, {
       id: record.id,
       caseId: record.case_id,
       nodeId: record.node_id,

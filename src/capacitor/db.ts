@@ -6,6 +6,7 @@ import { destroyDeviceStorageSecret, getDeviceStorageSecret } from './deviceIden
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
 let dbInstance: any = null;
+let databaseInitPromise: Promise<any> | null = null;
 let webStoreReady: Promise<void> | null = null;
 const DATABASE_NAME = 'crimegraph_db';
 
@@ -51,8 +52,16 @@ const initialiseWebStore = async (): Promise<void> => {
 
 export async function getDb() {
   if (dbInstance) return dbInstance;
-  return await initDatabase();
+  if (!databaseInitPromise) {
+    databaseInitPromise = initialiseDatabase().finally(() => {
+      databaseInitPromise = null;
+    });
+  }
+  return databaseInitPromise;
 }
+
+// Retained as the explicit bootstrap entry point for callers outside the store layer.
+export const initDatabase = getDb;
 
 export async function destroyProtectedLocalStorage(): Promise<void> {
   try {
@@ -70,20 +79,54 @@ export async function destroyProtectedLocalStorage(): Promise<void> {
     await destroyDeviceStorageSecret();
   }
   dbInstance = null;
+  databaseInitPromise = null;
 }
 
-export async function initDatabase() {
+const isMissingNativeConnectionError = (error: unknown): boolean =>
+  String(error).includes(`No available connection for database ${DATABASE_NAME}`);
+
+const openDatabaseConnection = async (securityMode: DatabaseSecurityMode): Promise<any> => {
+  // Capacitor SQLite tracks connections in both JavaScript and the native plugin. After
+  // encryption-secret setup or Android process recreation, those registries can diverge.
+  // The plugin clears its JavaScript registry when this consistency check reports false.
+  try {
+    await sqliteConnection.checkConnectionsConsistency();
+  } catch {
+    // The helper already clears stale JavaScript connection records on native failures.
+  }
+
+  const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
+  let db = isConn.result
+    ? await sqliteConnection.retrieveConnection(DATABASE_NAME, false)
+    : await sqliteConnection.createConnection(DATABASE_NAME, securityMode.encrypted, securityMode.mode, 1, false);
+
+  try {
+    await db.open();
+    return db;
+  } catch (error) {
+    if (!isConn.result || !isMissingNativeConnectionError(error)) throw error;
+
+    // A stale JavaScript connection object was found although the native registry no
+    // longer had its RW entry. Reconcile once more, recreate only if it was cleared,
+    // and avoid destructive database or encryption-secret recovery.
+    try {
+      await sqliteConnection.checkConnectionsConsistency();
+    } catch {
+      // The follow-up is intentionally limited to a single recreation attempt.
+    }
+    const stillConnected = await sqliteConnection.isConnection(DATABASE_NAME, false);
+    if (stillConnected.result) throw error;
+    db = await sqliteConnection.createConnection(DATABASE_NAME, securityMode.encrypted, securityMode.mode, 1, false);
+    await db.open();
+    return db;
+  }
+};
+
+async function initialiseDatabase() {
   try {
     await initialiseWebStore();
     const securityMode = await prepareDatabaseSecurity();
-    const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
-    let db;
-    if (isConn.result) {
-      db = await sqliteConnection.retrieveConnection(DATABASE_NAME, false);
-    } else {
-      db = await sqliteConnection.createConnection(DATABASE_NAME, securityMode.encrypted, securityMode.mode, 1, false);
-    }
-    await db.open();
+    const db = await openDatabaseConnection(securityMode);
 
     const createTables = `
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT);

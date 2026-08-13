@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, CapacitorSQLitePlugin } from '@capacitor-community/sqlite';
 import { defineCustomElements } from 'jeep-sqlite/loader';
-import { getDeviceStorageSecret } from './deviceIdentity';
+import { destroyDeviceStorageSecret, getDeviceStorageSecret } from './deviceIdentity';
 
 const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
@@ -52,6 +52,24 @@ const initialiseWebStore = async (): Promise<void> => {
 export async function getDb() {
   if (dbInstance) return dbInstance;
   return await initDatabase();
+}
+
+export async function destroyProtectedLocalStorage(): Promise<void> {
+  try {
+    if (dbInstance) await dbInstance.close();
+  } catch { /* Continue with connection cleanup. */ }
+  try {
+    const isConn = await sqliteConnection.isConnection(DATABASE_NAME, false);
+    if (isConn.result) await sqliteConnection.closeConnection(DATABASE_NAME, false);
+  } catch { /* A missing or already closed connection is safe to ignore. */ }
+  try {
+    await sqlite.deleteDatabase({ database: DATABASE_NAME });
+  } catch { /* The database may already have been removed. */ }
+  if (Capacitor.isNativePlatform()) {
+    try { await sqliteConnection.clearEncryptionSecret(); } catch { /* Continue to destroy the device-held wrapping key. */ }
+    await destroyDeviceStorageSecret();
+  }
+  dbInstance = null;
 }
 
 export async function initDatabase() {

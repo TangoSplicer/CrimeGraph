@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { Capacitor } from '@capacitor/core';
-import { getDb } from '../capacitor/db';
+import { destroyProtectedLocalStorage, getDb } from '../capacitor/db';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 import { decryptPackage, encryptPackage } from '../capacitor/crypto';
 import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
+import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
 import { assertPermission } from '../utils/permissions';
 import {
@@ -530,18 +531,15 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   wipeDatabase: async () => {
     assertCurrentPermission('system:wipe');
+    await requireHighRiskReauthentication('Permanently wipe all protected CrimeGraph data');
     const db = await getDb();
-    await withTransaction(db, async () => {
-      await ensureNotesTable();
-      await db.run('DELETE FROM edges');
-      await db.run('DELETE FROM nodes');
-      await db.run('DELETE FROM notes');
-      await db.run('DELETE FROM evidence_provenance');
-      await db.run('DELETE FROM cases');
-      await db.run('DELETE FROM audit_logs');
-      await db.run('DELETE FROM users');
-    });
-    await appendAuditEntry(db, 'SYSTEM_WIPE', 'DEVICE', 'Database sanitised; prior intelligence and operator records removed.', 'SYSTEM_WIPE');
+    const attachments = (await db.query('SELECT attachment_uri FROM evidence_provenance WHERE attachment_uri IS NOT NULL AND attachment_uri != ?', [''])).values || [];
+    for (const attachment of attachments) {
+      try { await Filesystem.deleteFile({ path: String(attachment.attachment_uri) }); } catch { /* Destroying the storage key below makes a surviving protected file unreadable. */ }
+    }
+    await destroyProtectedLocalStorage();
+    const resetDb = await getDb();
+    await appendAuditEntry(resetDb, 'SYSTEM_WIPE', 'DEVICE', 'Protected storage was reset and the device-held encryption secret was destroyed.', 'SYSTEM_WIPE');
     set({ cases: [], graphElements: [], activeCaseId: null, auditLogs: [], auditVerification: null, notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null });
   },
 }));

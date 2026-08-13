@@ -8,6 +8,8 @@ import { SettingsScreen } from './screens/SettingsScreen';
 import { AuthScreen } from './screens/AuthScreen';
 import { useAuthStore } from './stores/authStore';
 
+const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
 export const App: React.FC = () => {
   const { currentUser, isAppReady, initializeAuth, logout, intentionalBackground, setIntentionalBackground } = useAuthStore();
 
@@ -26,6 +28,22 @@ export const App: React.FC = () => {
 
     return () => { appStateListener.then(l => l.remove()); };
   }, [initializeAuth, logout, intentionalBackground, setIntentionalBackground]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    let timeoutId: number | undefined;
+    const resetIdleTimeout = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(logout, SESSION_IDLE_TIMEOUT_MS);
+    };
+    const activityEvents: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart'];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetIdleTimeout, { passive: true }));
+    resetIdleTimeout();
+    return () => {
+      window.clearTimeout(timeoutId);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetIdleTimeout));
+    };
+  }, [currentUser, logout]);
 
   if (!isAppReady) return <div className="min-h-screen bg-[#0c0e14] flex items-center justify-center text-[#3a7bd5] font-mono">INITIALISING HARDWARE...</div>;
   if (!currentUser) return <AuthScreen />;

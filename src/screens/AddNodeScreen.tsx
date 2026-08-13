@@ -37,6 +37,7 @@ export const AddNodeScreen: React.FC = () => {
   const [selectedType, setSelectedType] = useState('person');
   const [label, setLabel] = useState('');
   const [confidence, setConfidence] = useState(3);
+  const [occurredAt, setOccurredAt] = useState('');
   const [attributes, setAttributes] = useState<{key: string, value: string}[]>([]);
   const [evidence, setEvidence] = useState<Required<EvidenceProvenanceInput>>({
     exhibitNumber: '',
@@ -71,7 +72,7 @@ export const AddNodeScreen: React.FC = () => {
       if (attr.key.trim() && attr.value.trim()) attrRecord[attr.key.trim()] = attr.value.trim();
     });
 
-    await addNode(selectedType, label.trim(), confidence, attrRecord, selectedType === 'evidence' ? evidence : undefined);
+    await addNode(selectedType, label.trim(), confidence, attrRecord, selectedType === 'evidence' ? evidence : undefined, occurredAt);
     navigate('/workspace');
   };
 
@@ -102,6 +103,12 @@ export const AddNodeScreen: React.FC = () => {
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-2 tracking-wider">Primary Identifier (Label)</label>
           <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. John Doe, 07700 900461..." className="w-full bg-[#14171f] border border-[#252a3a] rounded p-4 text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" required />
+        </section>
+
+        <section>
+          <label className="block text-xs font-bold text-[#7880a0] uppercase mb-2 tracking-wider">{selectedType === 'event' ? 'Event Time' : 'Observed At (Optional)'}</label>
+          <input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} className="w-full bg-[#14171f] border border-[#252a3a] rounded p-4 text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" />
+          <p className="text-[10px] text-[#7880a0] mt-2">This is the time the intelligence was observed or occurred, not the time it was added to CrimeGraph.</p>
         </section>
 
         <section>

@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   type TEXT NOT NULL,
   confidence INTEGER NOT NULL DEFAULT 3,
   created_at TEXT NOT NULL,
+  occurred_at TEXT,
   attributes TEXT,
   FOREIGN KEY(case_id) REFERENCES cases(id)
 );
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);

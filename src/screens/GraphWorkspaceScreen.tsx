@@ -29,6 +29,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [isEditingNode, setIsEditingNode] = useState(false);
   const [editLabel, setEditLabel] = useState('');
   const [editConfidence, setEditConfidence] = useState(3);
+  const [editOccurredAt, setEditOccurredAt] = useState('');
   const [editAttributes, setEditAttributes] = useState<{key: string, value: string}[]>([]);
 
   const currentUser = useAuthStore((state) => state.currentUser);
@@ -67,6 +68,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
     if (!selectedNode) return;
     setEditLabel(selectedNode.data.label);
     setEditConfidence(selectedNode.data.confidence || 3);
+    setEditOccurredAt(selectedNode.data.occurred_at ? new Date(selectedNode.data.occurred_at).toISOString().slice(0, 16) : '');
     const attrs = selectedNode.data.attributes || {};
     setEditAttributes(Object.entries(attrs).map(([key, value]) => ({ key, value: String(value) })));
     setIsEditingNode(true);
@@ -78,7 +80,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
     editAttributes.forEach(attr => {
       if (attr.key.trim() && attr.value.trim()) attrRecord[attr.key.trim()] = attr.value.trim();
     });
-    await updateNode(selectedNodeId, editLabel.trim(), editConfidence, attrRecord);
+    await updateNode(selectedNodeId, editLabel.trim(), editConfidence, attrRecord, editOccurredAt);
     setIsEditingNode(false);
   };
 
@@ -130,14 +132,18 @@ export const GraphWorkspaceScreen: React.FC = () => {
           <div className="grid grid-cols-2 gap-2 mb-3">
             <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Entities</p><p className="text-lg font-mono text-[#dde1ec]">{graphInsights.entityCount}</p></div>
             <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Links</p><p className="text-lg font-mono text-[#dde1ec]">{graphInsights.relationshipCount}</p></div>
-            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Unconnected</p><p className="text-lg font-mono text-[#f39c12]">{graphInsights.isolatedEntities}</p></div>
-            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">No metadata</p><p className="text-lg font-mono text-[#f39c12]">{graphInsights.entitiesWithoutMetadata}</p></div>
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Evidence</p><p className="text-lg font-mono text-[#55c987]">{graphInsights.evidenceCount}</p></div>
+            <div className="bg-[#0c0e14] border border-[#252a3a] rounded p-2"><p className="text-[9px] text-[#7880a0] uppercase">Review queue</p><p className="text-lg font-mono text-[#f39c12]">{graphInsights.evidenceRequiringReview}</p></div>
           </div>
           <div className="border-t border-[#252a3a] pt-2">
             <p className="text-[9px] text-[#7880a0] uppercase font-bold mb-1">Most connected entities</p>
             {graphInsights.mostConnected.length ? graphInsights.mostConnected.map(entity => <div key={entity.id} className="flex justify-between text-[10px] py-1"><span className="text-[#dde1ec] truncate max-w-[12rem]">{entity.label}</span><span className="text-[#2ecc71] font-mono">{entity.connections} links</span></div>) : <p className="text-[10px] text-[#7880a0] italic">No relationships recorded.</p>}
           </div>
-          <p className="mt-3 text-[9px] text-[#7880a0]">Documentation cue: {graphInsights.notesWithoutLinks} note{graphInsights.notesWithoutLinks === 1 ? '' : 's'} without linked entities.</p>
+          <div className="mt-3 border-t border-[#252a3a] pt-2 space-y-1 text-[9px] text-[#7880a0]">
+            <p>Documentation cue: {graphInsights.notesWithoutLinks} note{graphInsights.notesWithoutLinks === 1 ? '' : 's'} without linked entities.</p>
+            <p>Evidence cue: {graphInsights.evidenceWithoutCustody} evidence item{graphInsights.evidenceWithoutCustody === 1 ? '' : 's'} without custody notes.</p>
+            <p>Chronology cue: {graphInsights.itemsWithoutObservedTime} entity or evidence item{graphInsights.itemsWithoutObservedTime === 1 ? '' : 's'} without an observed or acquired time.</p>
+          </div>
         </div>
       )}
 
@@ -205,6 +211,10 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <label className="block text-[10px] font-bold text-[#7880a0] uppercase mb-1">Confidence: {editConfidence}/5</label>
               <input type="range" min="1" max="5" value={editConfidence} onChange={(e) => setEditConfidence(parseInt(e.target.value))} className="w-full accent-[#3a7bd5]" />
             </div>
+            <div>
+              <label className="block text-[10px] font-bold text-[#7880a0] uppercase mb-1">Observed At</label>
+              <input type="datetime-local" value={editOccurredAt} onChange={(e) => setEditOccurredAt(e.target.value)} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-sm text-[#dde1ec] focus:outline-none focus:border-[#3a7bd5]" />
+            </div>
             <div className="border-t border-[#252a3a] pt-4">
               <div className="flex justify-between items-center mb-3">
                 <label className="text-[10px] font-bold text-[#7880a0] uppercase">Metadata</label>
@@ -238,6 +248,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
               <span className="text-[#7880a0] text-xs uppercase font-bold">Confidence</span>
               <span className="text-[#1d9a6c] font-mono text-lg">{renderStars(selectedNode.data.confidence)}</span>
             </div>
+            {selectedNode.data.occurred_at && <div className="flex justify-between items-center border-b border-[#252a3a] py-4"><span className="text-[#7880a0] text-xs uppercase font-bold">Observed At</span><span className="text-[#dde1ec] text-xs text-right">{new Date(selectedNode.data.occurred_at).toLocaleString()}</span></div>}
             {selectedNode.data.evidence && (
               <div className="space-y-2 border-t border-[#1a8a4a]/60 pt-4 mb-4">
                 <div className="flex justify-between items-center mb-3">

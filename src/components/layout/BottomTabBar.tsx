@@ -16,14 +16,14 @@ export const BottomTabBar: React.FC = () => {
   ];
 
   return (
-    <nav aria-label="Primary navigation" className="fixed bottom-0 left-0 right-0 min-h-16 bg-[#14171f] border-t border-[#252a3a] flex justify-around items-start pb-safe z-50">
+    <nav aria-label="Primary navigation" className="fixed bottom-0 left-0 right-0 min-h-16 bg-[#14171f] border-t border-[#252a3a] flex items-start pb-safe z-50">
       {navItems.map((item) => {
         const isActive = location.pathname === item.path;
         return (
           <button
             key={item.path}
             onClick={() => navigate(item.path)}
-            className={`flex flex-col items-center justify-center w-full h-16 shrink-0 space-y-1 transition-colors ${
+            className={`flex flex-1 min-w-0 flex-col items-center justify-center h-16 space-y-1 transition-colors ${
               isActive ? 'text-[#3a7bd5]' : 'text-[#7880a0] hover:text-[#dde1ec]'
             }`}
           >

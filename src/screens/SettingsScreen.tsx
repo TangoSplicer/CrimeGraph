@@ -5,9 +5,10 @@ import { useSyncStore } from '../stores/syncStore';
 import { can, USER_ROLES, type UserRole } from '../utils/permissions';
 import { usePairingStore } from '../stores/pairingStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
+import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 
 export const SettingsScreen: React.FC = () => {
-  const { currentUser, logout, addOperator } = useAuthStore();
+  const { currentUser, logout, addOperator, operators, loadOperators, disableOperator, reinstateOperator, resetOperatorPin, changeOperatorRole } = useAuthStore();
   const { wipeDatabase, auditLogs, auditVerification, loadAuditLogs } = useCaseStore();
   
   const {
@@ -39,6 +40,12 @@ export const SettingsScreen: React.FC = () => {
   const [newPin, setNewPin] = useState('');
   const [newRole, setNewRole] = useState<Exclude<UserRole, 'admin'>>('analyst');
   const [adminMsg, setAdminMsg] = useState('');
+  const [selectedOperatorId, setSelectedOperatorId] = useState<string | null>(null);
+  const [lifecyclePin, setLifecyclePin] = useState('');
+  const [lifecycleRole, setLifecycleRole] = useState<Exclude<UserRole, 'admin'>>('analyst');
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const [lifecycleMsg, setLifecycleMsg] = useState('');
+  const [isManagingOperator, setIsManagingOperator] = useState(false);
   const [auditFilter, setAuditFilter] = useState('');
   const [pairingDeviceName, setPairingDeviceName] = useState('');
   const [pairingCode, setPairingCode] = useState('');
@@ -48,8 +55,9 @@ export const SettingsScreen: React.FC = () => {
   useEffect(() => {
     if (currentUser?.role === 'admin') {
       loadAuditLogs();
+      loadOperators().catch((error) => setLifecycleMsg(error instanceof Error ? error.message : 'Operator registry is unavailable.'));
     }
-  }, [currentUser, loadAuditLogs]);
+  }, [currentUser, loadAuditLogs, loadOperators]);
 
   useEffect(() => {
     if (!canManagePairing) return;
@@ -77,6 +85,51 @@ export const SettingsScreen: React.FC = () => {
     } catch (err) {
       setAdminMsg(err instanceof Error ? err.message : 'Operator provisioning failed.');
     }
+  };
+
+  const selectOperator = (operatorId: string, role: Exclude<UserRole, 'admin'>) => {
+    setSelectedOperatorId(operatorId);
+    setLifecycleRole(role);
+    setLifecyclePin('');
+    setLifecycleReason('');
+    setLifecycleMsg('');
+  };
+
+  const runLifecycleAction = async (reason: string, action: () => Promise<void>, successMessage: string) => {
+    setIsManagingOperator(true);
+    setLifecycleMsg('');
+    try {
+      await requireHighRiskReauthentication(reason);
+      await action();
+      await Promise.all([loadOperators(), loadAuditLogs()]);
+      setLifecycleMsg(successMessage);
+      setLifecyclePin('');
+      setLifecycleReason('');
+    } catch (error) {
+      setLifecycleMsg(error instanceof Error ? error.message : 'Operator lifecycle action failed.');
+    } finally {
+      setIsManagingOperator(false);
+    }
+  };
+
+  const handleResetOperatorPin = () => {
+    if (!selectedOperatorId) return;
+    void runLifecycleAction('Confirm operator PIN reset', () => resetOperatorPin(selectedOperatorId, lifecyclePin), 'Operator PIN reset. Existing biometric access was revoked.');
+  };
+
+  const handleChangeOperatorRole = () => {
+    if (!selectedOperatorId) return;
+    void runLifecycleAction('Confirm operator role change', () => changeOperatorRole(selectedOperatorId, lifecycleRole), 'Operator role updated. Existing biometric access was revoked.');
+  };
+
+  const handleOperatorStatus = (isDisabled: boolean) => {
+    if (!selectedOperatorId) return;
+    const action = isDisabled
+      ? () => reinstateOperator(selectedOperatorId, lifecycleReason)
+      : () => disableOperator(selectedOperatorId, lifecycleReason);
+    const confirmation = isDisabled ? 'Confirm operator reinstatement' : 'Confirm operator disablement';
+    const success = isDisabled ? 'Operator reinstated. A new PIN or biometric enrolment may be required.' : 'Operator disabled. PIN and biometric sign-in are now blocked.';
+    void runLifecycleAction(confirmation, action, success);
   };
 
   const handleCreatePairingCode = async () => {
@@ -263,6 +316,70 @@ export const SettingsScreen: React.FC = () => {
                 <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Operator</button>
               </form>
               {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}
+            </section>
+
+            <section className="bg-[#1c2030] border border-[#b893e6] rounded-lg p-4">
+              <div className="flex justify-between items-end border-b border-[#b893e6]/30 pb-2 mb-3">
+                <div>
+                  <h2 className="text-xs font-bold text-[#b893e6] uppercase tracking-widest">Operator lifecycle</h2>
+                  <p className="mt-1 text-[10px] text-[#7880a0]">PIN resets, role changes, and account status changes require re-authentication and are written to the audit ledger.</p>
+                </div>
+                <span className="text-[9px] px-2 py-1 rounded bg-[#b893e6]/20 text-[#b893e6]">{operators.length} local</span>
+              </div>
+
+              <div className="space-y-3">
+                {operators.length === 0 && <p className="text-xs text-[#7880a0] text-center py-3">No non-administrator operators have been provisioned on this device.</p>}
+                {operators.map((operator) => {
+                  const isSelected = selectedOperatorId === operator.id;
+                  const isDisabled = operator.status === 'disabled';
+                  return (
+                    <article key={operator.id} className={`rounded border ${isDisabled ? 'border-[#c0392b]/60 bg-[#c0392b]/5' : 'border-[#252a3a] bg-[#0c0e14]'}`}>
+                      <button onClick={() => selectOperator(operator.id, operator.role)} className="w-full p-3 text-left">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-xs font-bold text-[#dde1ec] truncate">{operator.badge}</p>
+                            <p className="mt-1 text-[10px] text-[#7880a0] truncate">{operator.name} · {operator.role}</p>
+                          </div>
+                          <span className={`shrink-0 text-[9px] px-2 py-1 rounded font-bold uppercase ${isDisabled ? 'bg-[#c0392b]/20 text-[#ff9d95]' : 'bg-[#1d9a6c]/20 text-[#55c987]'}`}>{operator.status}</span>
+                        </div>
+                        <p className="mt-2 text-[9px] text-[#7880a0]">Last sign-in: {operator.lastLogin ? new Date(operator.lastLogin).toLocaleString() : 'Never'}{operator.biometricEnabled ? ' · biometric enrolled' : ''}</p>
+                        {isDisabled && <p className="mt-1 text-[9px] text-[#ff9d95]">Disabled: {operator.disabledReason || 'No reason recorded'}</p>}
+                      </button>
+
+                      {isSelected && (
+                        <div className="border-t border-[#252a3a] p-3 space-y-3">
+                          <div className="flex justify-between items-center">
+                            <p className="text-[10px] uppercase tracking-widest font-bold text-[#b893e6]">Manage {operator.badge}</p>
+                            <button onClick={() => setSelectedOperatorId(null)} className="text-[10px] text-[#7880a0] font-bold uppercase">Close</button>
+                          </div>
+
+                          {!isDisabled && (
+                            <>
+                              <label className="block text-[10px] uppercase font-bold text-[#7880a0]">New six-digit PIN
+                                <input type="password" value={lifecyclePin} onChange={(event) => setLifecyclePin(event.target.value.replace(/\D/g, ''))} maxLength={6} inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" placeholder="PIN" className="mt-1 w-full bg-[#14171f] border border-[#454d66] rounded p-3 text-xs tracking-widest text-white focus:border-[#b893e6] focus:outline-none font-mono" />
+                              </label>
+                              <button onClick={handleResetOperatorPin} disabled={isManagingOperator || lifecyclePin.length !== 6} className="w-full py-2.5 rounded border border-[#b893e6] text-[#d8c8ff] text-xs font-bold uppercase disabled:opacity-40">Reset PIN and revoke biometrics</button>
+
+                              <label className="block text-[10px] uppercase font-bold text-[#7880a0]">Operational role
+                                <select value={lifecycleRole} onChange={(event) => setLifecycleRole(event.target.value as Exclude<UserRole, 'admin'>)} className="mt-1 w-full bg-[#14171f] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none uppercase">
+                                  {USER_ROLES.filter((role): role is Exclude<UserRole, 'admin'> => role !== 'admin').map(role => <option key={role} value={role}>{role}</option>)}
+                                </select>
+                              </label>
+                              <button onClick={handleChangeOperatorRole} disabled={isManagingOperator || lifecycleRole === operator.role} className="w-full py-2.5 rounded border border-[#3a7bd5] text-[#72a7f0] text-xs font-bold uppercase disabled:opacity-40">Change role and revoke biometrics</button>
+                            </>
+                          )}
+
+                          <label className="block text-[10px] uppercase font-bold text-[#7880a0]">{isDisabled ? 'Reinstatement reason' : 'Disablement reason'}
+                            <textarea value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} maxLength={500} placeholder={isDisabled ? 'Why is this account being reinstated?' : 'Why is this account being disabled?'} className="mt-1 w-full min-h-20 bg-[#14171f] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" />
+                          </label>
+                          <button onClick={() => handleOperatorStatus(isDisabled)} disabled={isManagingOperator || lifecycleReason.trim().length < 5} className={`w-full py-2.5 rounded text-xs font-bold uppercase disabled:opacity-40 ${isDisabled ? 'bg-[#1d9a6c] text-white' : 'bg-[#c0392b] text-white'}`}>{isDisabled ? 'Reinstate account' : 'Disable account'}</button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+              {lifecycleMsg && <p role="status" className="mt-3 text-[10px] text-[#d8c8ff] font-bold leading-relaxed">{lifecycleMsg}</p>}
             </section>
 
             {/* THE IMMUTABLE AUDIT LEDGER */}

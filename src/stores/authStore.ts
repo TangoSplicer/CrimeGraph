@@ -4,10 +4,24 @@ import { hashPassword, verifyPassword } from '../capacitor/crypto';
 import { assertPermission, isUserRole, type UserRole } from '../utils/permissions';
 import { appendAuditEntry } from '../utils/auditLedger';
 
+export type OperatorStatus = 'active' | 'disabled';
 export interface User { id: string; badge: string; name: string; role: UserRole; }
+type ManageableRole = Exclude<UserRole, 'admin'>;
+export interface OperatorRecord extends Omit<User, 'role'> {
+  role: ManageableRole;
+  status: OperatorStatus;
+  biometricEnabled: boolean;
+  createdAt: string;
+  lastLogin: string | null;
+  credentialsUpdatedAt: string | null;
+  disabledAt: string | null;
+  disabledBy: string | null;
+  disabledReason: string | null;
+}
 
 interface AuthState {
   currentUser: User | null;
+  operators: OperatorRecord[];
   isFirstBoot: boolean;
   isAppReady: boolean;
   intentionalBackground: boolean;
@@ -17,12 +31,17 @@ interface AuthState {
   login: (badge: string, pin: string) => Promise<boolean>;
   biometricLogin: () => Promise<boolean>;
   adminLogin: (password: string) => Promise<boolean>;
-  addOperator: (badge: string, name: string, pin: string, role: Exclude<UserRole, 'admin'>) => Promise<void>;
+  addOperator: (badge: string, name: string, pin: string, role: ManageableRole) => Promise<void>;
+  loadOperators: () => Promise<void>;
+  disableOperator: (operatorId: string, reason: string) => Promise<void>;
+  reinstateOperator: (operatorId: string, reason: string) => Promise<void>;
+  resetOperatorPin: (operatorId: string, pin: string) => Promise<void>;
+  changeOperatorRole: (operatorId: string, role: ManageableRole) => Promise<void>;
   logout: () => void;
 }
 
 const createUsersTable = async (db: any) => {
-  await db.run('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT)');
+  await db.run("CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')), biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, credentials_updated_at TEXT, disabled_at TEXT, disabled_by TEXT, disabled_reason TEXT)");
 };
 
 const legacySha256 = async (secret: string): Promise<string> => {
@@ -33,6 +52,35 @@ const legacySha256 = async (secret: string): Promise<string> => {
 
 const isSixDigitPin = (value: string): boolean => /^\d{6}$/.test(value);
 const isStrongMasterPassword = (value: string): boolean => value.length >= 12;
+const isOperatorStatus = (value: unknown): value is OperatorStatus => value === 'active' || value === 'disabled';
+const isManageableRole = (value: unknown): value is ManageableRole => isUserRole(value) && value !== 'admin';
+
+const normaliseOperator = (record: any): OperatorRecord => {
+  if (!record || !isUserRole(record.role) || record.role === 'admin') throw new Error('Invalid operator record.');
+  const status = isOperatorStatus(record.status) ? record.status : 'active';
+  return {
+    id: String(record.id),
+    badge: String(record.badge),
+    name: String(record.name),
+    role: record.role,
+    status,
+    biometricEnabled: Number(record.biometric_enabled || 0) === 1,
+    createdAt: String(record.created_at || ''),
+    lastLogin: record.last_login ? String(record.last_login) : null,
+    credentialsUpdatedAt: record.credentials_updated_at ? String(record.credentials_updated_at) : null,
+    disabledAt: record.disabled_at ? String(record.disabled_at) : null,
+    disabledBy: record.disabled_by ? String(record.disabled_by) : null,
+    disabledReason: record.disabled_reason ? String(record.disabled_reason) : null,
+  };
+};
+
+const validateLifecycleReason = (reason: string): string => {
+  const cleanReason = reason.trim();
+  if (cleanReason.length < 5 || cleanReason.length > 500) {
+    throw new Error('A lifecycle reason between 5 and 500 characters is required.');
+  }
+  return cleanReason;
+};
 
 const migrateLegacyUsersSchema = async (db: any): Promise<void> => {
   const tableInfo = await db.query('PRAGMA table_info(users)');
@@ -48,8 +96,8 @@ const migrateLegacyUsersSchema = async (db: any): Promise<void> => {
     const createdColumn = columns.has('created_at') ? 'created_at' : "datetime('now')";
     const lastLoginColumn = columns.has('last_login') ? 'last_login' : 'NULL';
     await db.execute(
-      `INSERT INTO users (id, badge, name, hash, role, biometric_enabled, created_at, last_login)
-       SELECT id, UPPER(username), display_name, password_hash, role, ${biometricColumn}, ${createdColumn}, ${lastLoginColumn}
+      `INSERT INTO users (id, badge, name, hash, role, status, biometric_enabled, created_at, last_login)
+       SELECT id, UPPER(username), display_name, password_hash, role, 'active', ${biometricColumn}, ${createdColumn}, ${lastLoginColumn}
        FROM ${legacyTable};`,
     );
   }
@@ -68,7 +116,7 @@ const verifyAndUpgradeCredential = async (db: any, user: any, secret: string): P
   }
 
   if (isValid && needsUpgrade) {
-    await db.run('UPDATE users SET hash = ? WHERE id = ?', [await hashPassword(secret), user.id]);
+    await db.run('UPDATE users SET hash = ?, credentials_updated_at = ? WHERE id = ?', [await hashPassword(secret), new Date().toISOString(), user.id]);
   }
   return isValid;
 };
@@ -82,8 +130,12 @@ const updateLastLogin = async (db: any, userId: string, biometricEnabled = false
   }
 };
 
+const replaceOperator = (operators: OperatorRecord[], updated: OperatorRecord): OperatorRecord[] =>
+  operators.map((operator) => operator.id === updated.id ? updated : operator);
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   currentUser: null,
+  operators: [],
   isFirstBoot: true,
   isAppReady: false,
   intentionalBackground: false,
@@ -111,8 +163,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const now = new Date().toISOString();
     await db.run(
-      'INSERT INTO users (id, badge, name, hash, role, biometric_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      ['admin_001', 'ADMIN', 'Master Admin', await hashPassword(password), 'admin', 0, now],
+      'INSERT INTO users (id, badge, name, hash, role, status, biometric_enabled, created_at, credentials_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ['admin_001', 'ADMIN', 'Master Admin', await hashPassword(password), 'admin', 'active', 0, now, now],
     );
     set({ isFirstBoot: false });
   },
@@ -121,7 +173,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!badge.trim() || !isSixDigitPin(pin)) return false;
     try {
       const db = await getDb();
-      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role != ?', [badge.trim().toUpperCase(), 'admin']);
+      const result = await db.query("SELECT * FROM users WHERE badge = ? AND role != ? AND COALESCE(status, 'active') = 'active'", [badge.trim().toUpperCase(), 'admin']);
       const user = result.values?.[0];
       if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, pin)) return false;
 
@@ -140,7 +192,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const badge = localStorage.getItem('crimegraph_last_user');
       if (!badge) return false;
       const db = await getDb();
-      const result = await db.query('SELECT * FROM users WHERE badge = ? AND role != ? AND biometric_enabled = 1', [badge, 'admin']);
+      const result = await db.query("SELECT * FROM users WHERE badge = ? AND role != ? AND biometric_enabled = 1 AND COALESCE(status, 'active') = 'active'", [badge, 'admin']);
       const user = result.values?.[0];
       if (!user || !isUserRole(user.role)) return false;
 
@@ -156,7 +208,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   adminLogin: async (password: string) => {
     try {
       const db = await getDb();
-      const result = await db.query('SELECT * FROM users WHERE role = ? LIMIT 1', ['admin']);
+      const result = await db.query("SELECT * FROM users WHERE role = ? AND COALESCE(status, 'active') = 'active' LIMIT 1", ['admin']);
       const user = result.values?.[0];
       if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, password)) return false;
 
@@ -169,31 +221,129 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  addOperator: async (badge: string, name: string, pin: string, role: Exclude<UserRole, 'admin'>) => {
+  loadOperators: async () => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
+    const db = await getDb();
+    const result = await db.query("SELECT * FROM users WHERE role != 'admin' ORDER BY CASE COALESCE(status, 'active') WHEN 'active' THEN 0 ELSE 1 END, badge COLLATE NOCASE ASC");
+    set({ operators: (result.values || []).map(normaliseOperator) });
+  },
+
+  addOperator: async (badge: string, name: string, pin: string, role: ManageableRole) => {
     assertPermission(get().currentUser?.role, 'operator:provision');
     const cleanBadge = badge.trim().toUpperCase();
     const cleanName = name.trim();
     if (!/^[A-Z0-9-]{3,32}$/.test(cleanBadge)) throw new Error('Badge must contain 3–32 letters, numbers, or hyphens.');
     if (!cleanName || cleanName.length > 100) throw new Error('Operator name is required and must be 100 characters or fewer.');
     if (!isSixDigitPin(pin)) throw new Error('PIN must contain exactly six digits.');
-    if (!isUserRole(role)) throw new Error('Select a valid operational role.');
+    if (!isManageableRole(role)) throw new Error('Select a valid operational role.');
 
     const db = await getDb();
     const id = window.crypto?.randomUUID ? `user_${window.crypto.randomUUID()}` : `user_${Date.now()}`;
     const now = new Date().toISOString();
+    const operator: OperatorRecord = {
+      id, badge: cleanBadge, name: cleanName, role, status: 'active', biometricEnabled: false,
+      createdAt: now, lastLogin: null, credentialsUpdatedAt: now, disabledAt: null, disabledBy: null, disabledReason: null,
+    };
     await db.execute('BEGIN IMMEDIATE;');
     try {
       await db.run(
-        'INSERT INTO users (id, badge, name, hash, role, biometric_enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [id, cleanBadge, cleanName, await hashPassword(pin), role, 0, now],
+        'INSERT INTO users (id, badge, name, hash, role, status, biometric_enabled, created_at, credentials_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, cleanBadge, cleanName, await hashPassword(pin), role, 'active', 0, now, now],
       );
       await appendAuditEntry(db, 'PROVISION_OPERATOR', id, `Provisioned ${role} operator ${cleanBadge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
       await db.execute('COMMIT;');
+      set((state) => ({ operators: [...state.operators.filter((existing) => existing.id !== id), operator].sort((a, b) => a.badge.localeCompare(b.badge)) }));
     } catch (error) {
       try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original provisioning failure. */ }
       throw error;
     }
   },
 
-  logout: () => set({ currentUser: null, intentionalBackground: false }),
+  disableOperator: async (operatorId: string, reason: string) => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
+    const cleanReason = validateLifecycleReason(reason);
+    const db = await getDb();
+    const result = await db.query("SELECT * FROM users WHERE id = ? AND role != 'admin' LIMIT 1", [operatorId]);
+    const existing = result.values?.[0] ? normaliseOperator(result.values[0]) : null;
+    if (!existing) throw new Error('Operator record was not found.');
+    if (existing.status === 'disabled') throw new Error('Operator is already disabled.');
+
+    const now = new Date().toISOString();
+    await db.execute('BEGIN IMMEDIATE;');
+    try {
+      await db.run('UPDATE users SET status = ?, disabled_at = ?, disabled_by = ?, disabled_reason = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', ['disabled', now, get().currentUser?.badge || 'SYSTEM_UNKNOWN', cleanReason, operatorId]);
+      await appendAuditEntry(db, 'DISABLE_OPERATOR', operatorId, `Disabled ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+      await db.execute('COMMIT;');
+      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'disabled', biometricEnabled: false, lastLogin: null, disabledAt: now, disabledBy: get().currentUser?.badge || 'SYSTEM_UNKNOWN', disabledReason: cleanReason }) }));
+    } catch (error) {
+      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
+      throw error;
+    }
+  },
+
+  reinstateOperator: async (operatorId: string, reason: string) => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
+    const cleanReason = validateLifecycleReason(reason);
+    const db = await getDb();
+    const result = await db.query("SELECT * FROM users WHERE id = ? AND role != 'admin' LIMIT 1", [operatorId]);
+    const existing = result.values?.[0] ? normaliseOperator(result.values[0]) : null;
+    if (!existing) throw new Error('Operator record was not found.');
+    if (existing.status !== 'disabled') throw new Error('Only disabled operators can be reinstated.');
+
+    await db.execute('BEGIN IMMEDIATE;');
+    try {
+      await db.run('UPDATE users SET status = ?, disabled_at = NULL, disabled_by = NULL, disabled_reason = NULL, biometric_enabled = 0 WHERE id = ?', ['active', operatorId]);
+      await appendAuditEntry(db, 'REINSTATE_OPERATOR', operatorId, `Reinstated ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+      await db.execute('COMMIT;');
+      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'active', biometricEnabled: false, disabledAt: null, disabledBy: null, disabledReason: null }) }));
+    } catch (error) {
+      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
+      throw error;
+    }
+  },
+
+  resetOperatorPin: async (operatorId: string, pin: string) => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
+    if (!isSixDigitPin(pin)) throw new Error('PIN must contain exactly six digits.');
+    const db = await getDb();
+    const result = await db.query("SELECT * FROM users WHERE id = ? AND role != 'admin' LIMIT 1", [operatorId]);
+    const existing = result.values?.[0] ? normaliseOperator(result.values[0]) : null;
+    if (!existing) throw new Error('Operator record was not found.');
+    if (existing.status !== 'active') throw new Error('Reinstate the operator before resetting their PIN.');
+
+    const now = new Date().toISOString();
+    await db.execute('BEGIN IMMEDIATE;');
+    try {
+      await db.run('UPDATE users SET hash = ?, biometric_enabled = 0, last_login = NULL, credentials_updated_at = ? WHERE id = ?', [await hashPassword(pin), now, operatorId]);
+      await appendAuditEntry(db, 'RESET_OPERATOR_PIN', operatorId, `Reset PIN and revoked biometric sign-in for ${existing.badge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+      await db.execute('COMMIT;');
+      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, biometricEnabled: false, lastLogin: null, credentialsUpdatedAt: now }) }));
+    } catch (error) {
+      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
+      throw error;
+    }
+  },
+
+  changeOperatorRole: async (operatorId: string, role: ManageableRole) => {
+    assertPermission(get().currentUser?.role, 'operator:provision');
+    if (!isManageableRole(role)) throw new Error('Select a valid operational role.');
+    const db = await getDb();
+    const result = await db.query("SELECT * FROM users WHERE id = ? AND role != 'admin' LIMIT 1", [operatorId]);
+    const existing = result.values?.[0] ? normaliseOperator(result.values[0]) : null;
+    if (!existing) throw new Error('Operator record was not found.');
+    if (existing.role === role) throw new Error('The operator already has that role.');
+
+    await db.execute('BEGIN IMMEDIATE;');
+    try {
+      await db.run('UPDATE users SET role = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', [role, operatorId]);
+      await appendAuditEntry(db, 'CHANGE_OPERATOR_ROLE', operatorId, `Changed ${existing.badge} role from ${existing.role} to ${role}; biometric sign-in revoked`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+      await db.execute('COMMIT;');
+      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, role, biometricEnabled: false, lastLogin: null }) }));
+    } catch (error) {
+      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
+      throw error;
+    }
+  },
+
+  logout: () => set({ currentUser: null, operators: [], intentionalBackground: false }),
 }));

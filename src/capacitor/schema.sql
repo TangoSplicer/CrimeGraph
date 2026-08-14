@@ -4,9 +4,14 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('admin', 'supervisor', 'analyst', 'field', 'readonly')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
   biometric_enabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
-  last_login TEXT
+  last_login TEXT,
+  credentials_updated_at TEXT,
+  disabled_at TEXT,
+  disabled_by TEXT,
+  disabled_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cases (
@@ -111,6 +116,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_users_status_badge ON users(status, badge);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);

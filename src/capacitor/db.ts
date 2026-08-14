@@ -132,7 +132,7 @@ async function initialiseDatabase() {
     const db = await openDatabaseConnection(securityMode);
 
     const createTables = `
-      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT);
+      CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')), biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, credentials_updated_at TEXT, disabled_at TEXT, disabled_by TEXT, disabled_reason TEXT);
       CREATE TABLE IF NOT EXISTS storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
@@ -190,6 +190,11 @@ async function initialiseDatabase() {
       'ALTER TABLE audit_logs ADD COLUMN entry_hash TEXT;',
       'ALTER TABLE users ADD COLUMN biometric_enabled INTEGER DEFAULT 0;',
       'ALTER TABLE users ADD COLUMN last_login TEXT;',
+      "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled'));",
+      'ALTER TABLE users ADD COLUMN credentials_updated_at TEXT;',
+      'ALTER TABLE users ADD COLUMN disabled_at TEXT;',
+      'ALTER TABLE users ADD COLUMN disabled_by TEXT;',
+      'ALTER TABLE users ADD COLUMN disabled_reason TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_name TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_uri TEXT;',
       'ALTER TABLE evidence_provenance ADD COLUMN attachment_mime_type TEXT;',
@@ -212,6 +217,7 @@ async function initialiseDatabase() {
       await db.execute("UPDATE users SET role = 'supervisor' WHERE role = 'sio';");
       await db.execute("UPDATE users SET role = 'field' WHERE role = 'officer';");
       await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_users_status_badge ON users(status, badge);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);');

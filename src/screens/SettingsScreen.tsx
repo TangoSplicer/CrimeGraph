@@ -66,14 +66,16 @@ export const SettingsScreen: React.FC = () => {
 
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPin.length !== 6) return setAdminMsg('PIN must be exactly 6 digits.');
+    const cleanBadge = newBadge.trim().toUpperCase();
+    if (!/^[A-Z0-9-]{3,32}$/.test(cleanBadge)) return setAdminMsg('Badge must contain 3–32 letters, numbers, or hyphens.');
+    if (!/^\d{6}$/.test(newPin)) return setAdminMsg('PIN must contain exactly six digits.');
     try {
-      await addOperator(newBadge, newName, newPin, newRole);
+      await addOperator(cleanBadge, newName, newPin, newRole);
       await loadAuditLogs();
-      setAdminMsg(`${newRole} ${newBadge} successfully provisioned.`);
+      setAdminMsg(`${newRole} ${cleanBadge} successfully provisioned. Sign out, then use this badge and PIN on the operator screen.`);
       setNewBadge(''); setNewName(''); setNewPin(''); setNewRole('analyst');
     } catch (err) {
-      setAdminMsg('Failed to add user. Badge may already exist.');
+      setAdminMsg(err instanceof Error ? err.message : 'Operator provisioning failed.');
     }
   };
 
@@ -122,7 +124,7 @@ export const SettingsScreen: React.FC = () => {
   const filteredLogs = auditLogs.filter(log => log.user_id.toLowerCase().includes(auditFilter.toLowerCase()));
 
   return (
-    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe relative pb-16">
+    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe pb-safe-nav relative">
       <div className="p-4 bg-[#14171f] border-b border-[#252a3a] shrink-0">
         <h1 className="text-xl font-bold tracking-widest text-white uppercase">System Settings</h1>
       </div>
@@ -252,12 +254,12 @@ export const SettingsScreen: React.FC = () => {
               <h2 className="text-xs font-bold text-[#f39c12] uppercase tracking-widest mb-4 border-b border-[#f39c12]/30 pb-2">Admin Command Deck</h2>
               <p className="text-[10px] text-[#7880a0] mb-4">Provision new operator access to local hardware.</p>
               <form onSubmit={handleAddUser} className="space-y-3">
-                <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value)} required placeholder="BADGE (e.g. WYP-112)" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
+                <input type="text" value={newBadge} onChange={e => setNewBadge(e.target.value.toUpperCase())} required placeholder="BADGE (e.g. WYP-112)" autoCapitalize="characters" autoCorrect="off" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase" />
                 <input type="text" value={newName} onChange={e => setNewName(e.target.value)} required placeholder="OPERATOR NAME" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none" />
                 <select value={newRole} onChange={e => setNewRole(e.target.value as Exclude<UserRole, 'admin'>)} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs text-white focus:border-[#f39c12] focus:outline-none uppercase">
                   {USER_ROLES.filter((role): role is Exclude<UserRole, 'admin'> => role !== 'admin').map(role => <option key={role} value={role}>{role}</option>)}
                 </select>
-                <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} required placeholder="6-DIGIT PIN" maxLength={6} className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
+                <input type="password" value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} required placeholder="6-DIGIT PIN" maxLength={6} inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" className="w-full bg-[#0c0e14] border border-[#252a3a] rounded p-3 text-xs tracking-widest text-white focus:border-[#f39c12] focus:outline-none font-mono" />
                 <button type="submit" className="w-full py-3 bg-[#f39c12] text-white rounded text-xs font-bold uppercase hover:bg-[#e67e22]">Provision Operator</button>
               </form>
               {adminMsg && <p className="text-[10px] text-[#f39c12] mt-3 font-bold uppercase">{adminMsg}</p>}

@@ -117,7 +117,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   if (!activeCase) return null;
 
   return (
-    <div className="flex flex-col w-full h-screen pb-16 bg-[#0c0e14] relative">
+    <div className="flex flex-col w-full h-screen pb-safe-nav bg-[#0c0e14] relative">
       <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe z-20 flex justify-between items-center shadow-md">
         <div>
           <h2 className="text-sm font-mono text-[#3a7bd5]">{activeCase.reference_number}</h2>
@@ -170,7 +170,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
       )}
 
       {isNotesOpen && (
-        <div className="absolute top-[50px] bottom-[60px] left-0 w-full md:w-96 z-30 bg-[#14171f] border-r border-[#252a3a] shadow-2xl flex flex-col mt-safe">
+        <div className="absolute top-[50px] bottom-safe-nav left-0 w-full md:w-96 z-30 bg-[#14171f] border-r border-[#252a3a] shadow-2xl flex flex-col mt-safe">
           <div className="p-4 border-b border-[#252a3a] bg-[#1a202c]">
             <h3 className="text-xs font-bold text-[#f39c12] uppercase tracking-widest mb-2">New Intelligence Note</h3>
             <textarea value={newNoteContent} onChange={e => setNewNoteContent(e.target.value)} placeholder="Draft narrative report..." className="w-full h-24 bg-[#0c0e14] border border-[#454d66] rounded p-2 text-xs text-[#dde1ec] focus:outline-none focus:border-[#f39c12] mb-2" />
@@ -214,7 +214,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
       <div className="flex-1 relative overflow-hidden" onClick={() => { setIsFilterOpen(false); setIsNotesOpen(false); setIsAnalysisOpen(false); }}>
         <GraphCanvas />
         {!selectedNodeId && !selectedEdgeId && !connectingFromId && canCreateIntelligence && (
-          <button onClick={() => navigate('/add')} className="absolute bottom-24 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">
+          <button onClick={() => navigate('/add')} className="absolute bottom-safe-nav mb-4 right-6 w-14 h-14 bg-[#3a7bd5] text-white rounded-full flex items-center justify-center text-3xl shadow-[0_4px_20px_rgba(58,123,213,0.6)] z-[100] active:scale-95 transition-all">
             +
           </button>
         )}

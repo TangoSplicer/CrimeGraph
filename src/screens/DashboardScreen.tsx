@@ -68,7 +68,7 @@ export const DashboardScreen: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe relative">
+    <div className="h-screen w-full bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe pb-safe-nav relative">
       <div className="p-4 bg-[#14171f] border-b border-[#252a3a] flex justify-between items-center z-10 shrink-0">
         <div>
           <h1 className="text-xl font-bold tracking-widest text-white uppercase">Operations</h1>
@@ -85,7 +85,7 @@ export const DashboardScreen: React.FC = () => {
         <button onClick={() => setActiveTab('archived')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-colors ${activeTab === 'archived' ? 'text-[#e74c3c] border-b-2 border-[#e74c3c]' : 'text-[#7880a0] hover:text-[#dde1ec]'}`}>Archived</button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 pb-24 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {filteredCases.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-40 text-[#7880a0]"><p className="text-sm">No {activeTab} operations found.</p></div>
         ) : (

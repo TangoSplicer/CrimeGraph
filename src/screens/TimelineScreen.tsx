@@ -32,8 +32,8 @@ export const TimelineScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#0c0e14]">
-      <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] pt-safe shadow-md">
+    <div className="flex flex-col w-full h-screen pt-safe pb-safe-nav bg-[#0c0e14]">
+      <div className="px-4 py-3 bg-[#14171f] border-b border-[#252a3a] shadow-md">
         <h2 className="text-sm font-mono text-[#3a7bd5]">{activeCase?.reference_number}</h2>
         <p className="text-xs text-[#7880a0]">Intelligence Timeline</p>
       </div>

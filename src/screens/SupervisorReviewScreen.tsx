@@ -52,7 +52,7 @@ export const SupervisorReviewScreen: React.FC = () => {
   if (!canReview) return null;
 
   return (
-    <div className="min-h-screen pb-20 bg-[#0c0e14] text-[#dde1ec]">
+    <div className="min-h-screen pb-safe-nav bg-[#0c0e14] text-[#dde1ec]">
       <header className="px-4 py-4 bg-[#14171f] border-b border-[#252a3a] pt-safe">
         <div className="flex items-start justify-between gap-3">
           <div>

@@ -20,6 +20,13 @@ describe('permission policy', () => {
     expect(can('field', 'pairing:manage')).toBe(false);
     expect(can('readonly', 'case:export')).toBe(false);
   });
+
+  it('allows field capture while keeping case creation and package imports accountable', () => {
+    expect(can('field', 'intelligence:create')).toBe(true);
+    expect(can('field', 'intelligence:resubmit')).toBe(true);
+    expect(can('field', 'case:create')).toBe(false);
+    expect(can('field', 'case:import')).toBe(false);
+  });
 });
 
 describe('evidence provenance', () => {

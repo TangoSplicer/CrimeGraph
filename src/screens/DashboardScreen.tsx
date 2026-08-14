@@ -12,6 +12,7 @@ export const DashboardScreen: React.FC = () => {
   const canCreateCase = can(currentUser?.role, 'case:create');
   const canImportCase = can(currentUser?.role, 'case:import');
   const canArchiveCase = can(currentUser?.role, 'case:archive');
+  const isFieldOperator = currentUser?.role === 'field';
   
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -72,13 +73,20 @@ export const DashboardScreen: React.FC = () => {
       <div className="p-4 bg-[#14171f] border-b border-[#252a3a] flex justify-between items-center z-10 shrink-0">
         <div>
           <h1 className="text-xl font-bold tracking-widest text-white uppercase">Operations</h1>
-          <p className="text-xs text-[#7880a0]">Select a database to load</p>
+          <p className="text-xs text-[#7880a0]">{isFieldOperator ? 'Field capture mode: select an existing operation' : 'Select a database to load'}</p>
         </div>
         <div className="flex space-x-2">
-          <button onClick={handleImport} disabled={!canImportCase} className="px-3 py-2 bg-[#252a3a] text-[#dde1ec] text-xs font-bold rounded uppercase hover:bg-[#3a415c] disabled:opacity-40">Import</button>
-          <button onClick={() => setIsModalOpen(true)} disabled={!canCreateCase} className="px-3 py-2 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase shadow-[0_0_10px_rgba(58,123,213,0.3)] hover:bg-[#4a8be5] disabled:opacity-40">+ New</button>
+          <button onClick={handleImport} disabled={!canImportCase} title={!canImportCase ? 'Case imports require an analyst, supervisor, or administrator account.' : 'Import an encrypted case package.'} className="px-3 py-2 bg-[#252a3a] text-[#dde1ec] text-xs font-bold rounded uppercase hover:bg-[#3a415c] disabled:opacity-40">Import</button>
+          <button onClick={() => setIsModalOpen(true)} disabled={!canCreateCase} title={!canCreateCase ? 'Case creation requires an analyst, supervisor, or administrator account.' : 'Create an operation.'} className="px-3 py-2 bg-[#3a7bd5] text-white text-xs font-bold rounded uppercase shadow-[0_0_10px_rgba(58,123,213,0.3)] hover:bg-[#4a8be5] disabled:opacity-40">+ New</button>
         </div>
       </div>
+
+      {isFieldOperator && (
+        <aside role="status" className="mx-4 mt-4 rounded-lg border border-[#3a7bd5]/40 bg-[#3a7bd5]/10 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-[#72a7f0]">Field workflow</p>
+          <p className="mt-1 text-xs leading-relaxed text-[#dde1ec]">Select an existing local operation, open its graph, then capture observations and evidence. An analyst, supervisor, or administrator must create or import the operation first.</p>
+        </aside>
+      )}
 
       <div className="flex border-b border-[#252a3a] bg-[#14171f] shrink-0">
         <button onClick={() => setActiveTab('active')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-widest transition-colors ${activeTab === 'active' ? 'text-[#3a7bd5] border-b-2 border-[#3a7bd5]' : 'text-[#7880a0] hover:text-[#dde1ec]'}`}>Active</button>
@@ -87,7 +95,7 @@ export const DashboardScreen: React.FC = () => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {filteredCases.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 text-[#7880a0]"><p className="text-sm">No {activeTab} operations found.</p></div>
+          <div className="flex flex-col items-center justify-center h-40 text-center text-[#7880a0]"><p className="text-sm">{isFieldOperator && activeTab === 'active' ? 'No local operations are available for field capture.' : `No ${activeTab} operations found.`}</p>{isFieldOperator && activeTab === 'active' && <p className="mt-2 max-w-sm text-xs leading-relaxed">Ask an analyst, supervisor, or administrator to create or import the operation on this device. Once it appears here, select it to open the graph and record intelligence.</p>}</div>
         ) : (
           filteredCases.map((c) => (
             <div key={c.id} className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4 flex flex-col cursor-pointer hover:border-[#3a7bd5] transition-colors" onClick={() => handleOpenCase(c.id)}>

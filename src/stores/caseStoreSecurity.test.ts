@@ -57,6 +57,7 @@ const makeDb = () => ({
 });
 
 beforeEach(() => {
+  Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
   vi.clearAllMocks();
   mocks.isNativePlatform.mockReturnValue(true);
   mocks.getAuthState.mockReturnValue({
@@ -141,5 +142,48 @@ describe('review decision and secure wipe orchestration', () => {
     expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'SYSTEM_WIPE', 'DEVICE', expect.stringContaining('encryption secret was destroyed'), 'SYSTEM_WIPE');
     expect(useCaseStore.getState().activeCaseId).toBeNull();
     expect(useCaseStore.getState().cases).toEqual([]);
+  });
+});
+
+
+describe('case assignment and field work queue', () => {
+  it('shows a field operator only their active local assignments', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    db.query.mockResolvedValue({ values: [{ id: 'case-1', reference_number: 'CASE-1', title: 'Assigned case', case_type: 'operation', status: 'active', classification: 'OFFICIAL', date_opened: '2026-08-14T00:00:00.000Z', assignment_id: 'assignment-1', assignment_note: 'Capture initial observations.', assigned_at: '2026-08-14T00:00:00.000Z', assigned_by: 'SUP-001' }] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().loadCases();
+
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('INNER JOIN case_assignments'), ['field-001']);
+    expect(useCaseStore.getState().cases).toMatchObject([{ id: 'case-1', assignment_note: 'Capture initial observations.' }]);
+  });
+
+  it('records a field assignment only after validating an active field operator', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ reference_number: 'CASE-1', status: 'active' }] })
+      .mockResolvedValueOnce({ values: [{ id: 'field-001', badge: 'FIELD-001', name: 'Field Operator' }] })
+      .mockResolvedValueOnce({ values: [] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().assignFieldOperator('case-1', 'field-001', 'Capture scene observations.');
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO case_assignments (id, case_id, operator_id, status, assignment_note, assigned_by, assigned_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^assignment_/), 'case-1', 'field-001', 'active', 'Capture scene observations.', 'SUP-001', expect.any(String), expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'ASSIGN_FIELD_OPERATOR', 'case-1', expect.stringContaining('FIELD-001'), 'SUP-001');
+  });
+
+  it('fails closed when a field operator attempts to load an unassigned graph', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    db.query.mockResolvedValue({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().loadGraphElements('case-1')).rejects.toThrow('not assigned');
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('case_assignments'), ['case-1', 'field-001']);
   });
 });

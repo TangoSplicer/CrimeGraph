@@ -7,11 +7,12 @@ import { can } from '../utils/permissions';
 
 export const DashboardScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase } = useCaseStore();
+  const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase, caseAssignments, assignableFieldOperators, loadCaseAssignments, loadAssignableFieldOperators, assignFieldOperator, removeFieldAssignment } = useCaseStore();
   const { setIntentionalBackground, currentUser } = useAuthStore(); // 🚀 NEW: Import Intentional Background trigger
   const canCreateCase = can(currentUser?.role, 'case:create');
   const canImportCase = can(currentUser?.role, 'case:import');
   const canArchiveCase = can(currentUser?.role, 'case:archive');
+  const canAssignCase = can(currentUser?.role, 'case:assign');
   const isFieldOperator = currentUser?.role === 'field';
   
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
@@ -19,8 +20,16 @@ export const DashboardScreen: React.FC = () => {
   const [newTitle, setNewTitle] = useState('');
   const [newRef, setNewRef] = useState('');
   const [newClass, setNewClass] = useState('OFFICIAL');
+  const [assignmentCaseId, setAssignmentCaseId] = useState<string | null>(null);
+  const [assigneeId, setAssigneeId] = useState('');
+  const [assignmentNote, setAssignmentNote] = useState('');
+  const [removalReason, setRemovalReason] = useState('');
+  const [assignmentMsg, setAssignmentMsg] = useState('');
 
   useEffect(() => { loadCases(); }, [loadCases]);
+  useEffect(() => {
+    if (canAssignCase) loadAssignableFieldOperators().catch((error) => setAssignmentMsg(error instanceof Error ? error.message : 'Field operator registry is unavailable.'));
+  }, [canAssignCase, loadAssignableFieldOperators]);
 
   const filteredCases = cases.filter(c => c.status === activeTab);
 
@@ -37,6 +46,37 @@ export const DashboardScreen: React.FC = () => {
 
   const handleOpenCase = (id: string) => {
     setActiveCase(id); navigate('/workspace');
+  };
+
+  const handleOpenAssignments = (caseId: string) => {
+    setAssignmentCaseId(caseId);
+    setAssigneeId('');
+    setAssignmentNote('');
+    setRemovalReason('');
+    setAssignmentMsg('');
+    loadCaseAssignments(caseId).catch((error) => setAssignmentMsg(error instanceof Error ? error.message : 'Assignments could not be loaded.'));
+  };
+
+  const handleAssignFieldOperator = async () => {
+    if (!assignmentCaseId || !assigneeId) return;
+    try {
+      await assignFieldOperator(assignmentCaseId, assigneeId, assignmentNote);
+      setAssigneeId('');
+      setAssignmentNote('');
+      setAssignmentMsg('Field operator assigned to this operation.');
+    } catch (error) {
+      setAssignmentMsg(error instanceof Error ? error.message : 'Assignment could not be recorded.');
+    }
+  };
+
+  const handleRemoveAssignment = async (assignmentId: string) => {
+    try {
+      await removeFieldAssignment(assignmentId, removalReason);
+      setRemovalReason('');
+      setAssignmentMsg('Field assignment removed.');
+    } catch (error) {
+      setAssignmentMsg(error instanceof Error ? error.message : 'Assignment could not be removed.');
+    }
   };
 
   const handleImport = async () => {
@@ -101,9 +141,10 @@ export const DashboardScreen: React.FC = () => {
             <div key={c.id} className="bg-[#1c2030] border border-[#252a3a] rounded-lg p-4 flex flex-col cursor-pointer hover:border-[#3a7bd5] transition-colors" onClick={() => handleOpenCase(c.id)}>
               <div className="flex justify-between items-start mb-2">
                 <span className="text-[10px] text-[#3a7bd5] font-mono tracking-widest">{c.reference_number}</span>
-                <span className="text-[9px] px-2 py-1 bg-[#252a3a] text-[#dde1ec] font-bold rounded uppercase">{c.classification}</span>
+                <div className="flex items-center gap-2"><span className="text-[9px] px-2 py-1 bg-[#252a3a] text-[#dde1ec] font-bold rounded uppercase">{c.classification}</span>{canAssignCase && c.status === 'active' && <button onClick={(event) => { event.stopPropagation(); handleOpenAssignments(c.id); }} className="text-[9px] px-2 py-1 rounded border border-[#b893e6]/70 text-[#d8c8ff] font-bold uppercase">Assign field</button>}</div>
               </div>
-              <h2 className="text-lg font-bold text-white mb-4 line-clamp-1">{c.title}</h2>
+              <h2 className="text-lg font-bold text-white mb-2 line-clamp-1">{c.title}</h2>
+              {isFieldOperator && <p className="mb-3 text-[10px] leading-relaxed text-[#72a7f0]">{c.assignment_note || 'Assigned for field capture. Record observations and evidence for supervisory review.'}</p>}
               <div className="flex justify-between items-end border-t border-[#252a3a] pt-3">
                 <span className="text-[10px] text-[#7880a0] uppercase tracking-widest">{new Date(c.date_opened).toLocaleDateString()}</span>
                 {activeTab === 'active' && <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id).catch((error) => alert(error instanceof Error ? error.message : 'Unable to archive case.')); }} disabled={!canArchiveCase} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline disabled:opacity-40">Archive</button>}
@@ -112,6 +153,25 @@ export const DashboardScreen: React.FC = () => {
           ))
         )}
       </div>
+
+      {assignmentCaseId && (
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-4">
+          <section role="dialog" aria-modal="true" aria-label="Manage field assignments" className="w-full max-w-md max-h-[80vh] overflow-y-auto bg-[#14171f] border border-[#b893e6] rounded-lg p-5 shadow-2xl">
+            <div className="flex justify-between gap-3 border-b border-[#252a3a] pb-3 mb-4"><div><h2 className="text-sm font-bold text-[#d8c8ff] uppercase tracking-widest">Field work queue</h2><p className="mt-1 text-[10px] text-[#7880a0]">Assignments are local to this encrypted device and do not transfer intelligence.</p></div><button onClick={() => setAssignmentCaseId(null)} className="text-xs font-bold text-[#7880a0] uppercase">Close</button></div>
+            <div className="space-y-3">
+              <label className="block text-[10px] font-bold uppercase text-[#7880a0]">Active field operator
+                <select value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)} className="mt-1 w-full bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none"><option value="">Select operator</option>{assignableFieldOperators.map((operator) => <option key={operator.id} value={operator.id}>{operator.badge} · {operator.name}</option>)}</select>
+              </label>
+              <label className="block text-[10px] font-bold uppercase text-[#7880a0]">Assignment note <span className="normal-case font-normal">(optional)</span>
+                <textarea value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} maxLength={500} placeholder="Tasking or safety context for the field operator" className="mt-1 w-full min-h-20 bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" />
+              </label>
+              <button onClick={handleAssignFieldOperator} disabled={!assigneeId} className="w-full py-3 rounded bg-[#b893e6] text-[#0c0e14] text-xs font-bold uppercase disabled:opacity-40">Assign to operation</button>
+            </div>
+            <div className="mt-5 border-t border-[#252a3a] pt-4 space-y-2"><p className="text-[10px] font-bold uppercase tracking-widest text-[#7880a0]">Current and historic assignments</p>{caseAssignments.length === 0 && <p className="text-xs text-[#7880a0]">No field assignments are recorded for this operation.</p>}{caseAssignments.map((assignment) => <article key={assignment.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><p className="text-xs font-mono font-bold text-[#dde1ec]">{assignment.operatorBadge}</p><p className="mt-1 text-[10px] text-[#7880a0]">{assignment.operatorName} · {assignment.status}</p></div><span className={`text-[9px] font-bold uppercase ${assignment.status === 'active' ? 'text-[#55c987]' : 'text-[#ff9d95]'}`}>{assignment.status}</span></div>{assignment.note && <p className="mt-2 text-[10px] text-[#dde1ec]">{assignment.note}</p>}{assignment.status === 'active' && <div className="mt-3 space-y-2"><input value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} placeholder="Removal reason (5+ characters)" className="w-full bg-[#14171f] border border-[#454d66] rounded p-2 text-xs text-white focus:border-[#c0392b] focus:outline-none" /><button onClick={() => handleRemoveAssignment(assignment.id)} disabled={removalReason.trim().length < 5} className="w-full py-2 rounded border border-[#c0392b] text-[#ff9d95] text-[10px] font-bold uppercase disabled:opacity-40">Remove assignment</button></div>}{assignment.status === 'removed' && <p className="mt-2 text-[9px] text-[#ff9d95]">Removed: {assignment.removalReason || 'No reason recorded'}</p>}</article>)}</div>
+            {assignmentMsg && <p role="status" className="mt-4 text-[10px] font-bold text-[#d8c8ff]">{assignmentMsg}</p>}
+          </section>
+        </div>
+      )}
 
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">

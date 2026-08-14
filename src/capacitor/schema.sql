@@ -30,6 +30,23 @@ CREATE TABLE IF NOT EXISTS cases (
   FOREIGN KEY(lead_officer_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS case_assignments (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  operator_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'removed')),
+  assignment_note TEXT,
+  assigned_by TEXT NOT NULL,
+  assigned_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  removed_by TEXT,
+  removed_at TEXT,
+  removal_reason TEXT,
+  UNIQUE(case_id, operator_id),
+  FOREIGN KEY(case_id) REFERENCES cases(id),
+  FOREIGN KEY(operator_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL,
@@ -117,6 +134,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_users_status_badge ON users(status, badge);
+CREATE INDEX IF NOT EXISTS idx_case_assignments_operator_status ON case_assignments(operator_id, status, assigned_at);
+CREATE INDEX IF NOT EXISTS idx_case_assignments_case_status ON case_assignments(case_id, status);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);

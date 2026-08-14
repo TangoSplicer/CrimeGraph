@@ -135,6 +135,7 @@ async function initialiseDatabase() {
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, badge TEXT UNIQUE NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')), biometric_enabled INTEGER DEFAULT 0, created_at TEXT NOT NULL, last_login TEXT, credentials_updated_at TEXT, disabled_at TEXT, disabled_by TEXT, disabled_reason TEXT);
       CREATE TABLE IF NOT EXISTS storage_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS cases (id TEXT PRIMARY KEY, reference_number TEXT UNIQUE NOT NULL, title TEXT NOT NULL, case_type TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', lead_officer_id TEXT, classification TEXT NOT NULL DEFAULT 'OFFICIAL', description TEXT, date_opened TEXT NOT NULL, date_closed TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS case_assignments (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, operator_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'removed')), assignment_note TEXT, assigned_by TEXT NOT NULL, assigned_at TEXT NOT NULL, updated_at TEXT NOT NULL, removed_by TEXT, removed_at TEXT, removal_reason TEXT, UNIQUE(case_id, operator_id), FOREIGN KEY(case_id) REFERENCES cases(id), FOREIGN KEY(operator_id) REFERENCES users(id));
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
       
@@ -218,6 +219,8 @@ async function initialiseDatabase() {
       await db.execute("UPDATE users SET role = 'field' WHERE role = 'officer';");
       await db.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_users_status_badge ON users(status, badge);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_case_assignments_operator_status ON case_assignments(operator_id, status, assigned_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_case_assignments_case_status ON case_assignments(case_id, status);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);');

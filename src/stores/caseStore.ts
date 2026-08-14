@@ -17,7 +17,9 @@ import {
   type EvidenceProvenanceInput,
 } from '../utils/evidenceProvenance';
 
-export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; }
+export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; assignment_id?: string | null; assignment_note?: string | null; assigned_at?: string | null; assigned_by?: string | null; }
+export interface AssignableFieldOperator { id: string; badge: string; name: string; lastLogin: string | null; }
+export interface CaseAssignment { id: string; caseId: string; operatorId: string; operatorBadge: string; operatorName: string; status: 'active' | 'removed'; note: string; assignedBy: string; assignedAt: string; removedBy: string | null; removedAt: string | null; removalReason: string | null; }
 export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
 
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; review_status?: ReviewStatus; submitted_by?: string | null; submitted_at?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; review_notes?: string | null; }; }
@@ -32,6 +34,8 @@ interface CaseState {
   auditLogs: AuditLog[];
   auditVerification: AuditVerificationResult | null;
   reviewQueue: ReviewQueueItem[];
+  caseAssignments: CaseAssignment[];
+  assignableFieldOperators: AssignableFieldOperator[];
   notes: IntelNote[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -42,6 +46,10 @@ interface CaseState {
   addCase: (title: string, refNumber: string, caseType: string, classification: string) => Promise<void>;
   archiveCase: (caseId: string) => Promise<void>;
   restoreCase: (caseId: string) => Promise<void>;
+  loadCaseAssignments: (caseId: string) => Promise<void>;
+  loadAssignableFieldOperators: () => Promise<void>;
+  assignFieldOperator: (caseId: string, operatorId: string, note: string) => Promise<void>;
+  removeFieldAssignment: (assignmentId: string, reason: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput, occurredAt?: string) => Promise<void>;
   updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>, occurredAt?: string) => Promise<void>;
@@ -78,6 +86,15 @@ const createId = (prefix: string): string => window.crypto?.randomUUID ? `${pref
 const currentOperator = (): string => useAuthStore.getState().currentUser?.badge || 'SYSTEM_UNKNOWN';
 const assertCurrentPermission = (permission: Parameters<typeof assertPermission>[1]): void =>
   assertPermission(useAuthStore.getState().currentUser?.role, permission);
+
+const ensureCaseAccess = async (caseId: string): Promise<void> => {
+  const user = useAuthStore.getState().currentUser;
+  if (!user) throw new Error('An active operator session is required.');
+  if (user.role !== 'field') return;
+  const db = await getDb();
+  const assignment = await db.query("SELECT id FROM case_assignments WHERE case_id = ? AND operator_id = ? AND status = 'active' LIMIT 1", [caseId, user.id]);
+  if (!assignment.values?.length) throw new Error('This operation is not assigned to the current field operator.');
+};
 
 const logAudit = async (action: string, targetId: string, details: string) => {
   const db = await getDb();
@@ -182,6 +199,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   auditLogs: [],
   auditVerification: null,
   reviewQueue: [],
+  caseAssignments: [],
+  assignableFieldOperators: [],
   notes: [],
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -190,8 +209,21 @@ export const useCaseStore = create<CaseState>((set, get) => ({
 
   loadCases: async () => {
     const db = await getDb();
-    const response = await db.query('SELECT * FROM cases ORDER BY date_opened DESC');
-    set({ cases: response.values || [] });
+    const user = useAuthStore.getState().currentUser;
+    const response = user?.role === 'field'
+      ? await db.query(
+        `SELECT c.*, ca.id AS assignment_id, ca.assignment_note, ca.assigned_at, ca.assigned_by
+         FROM cases c
+         INNER JOIN case_assignments ca ON ca.case_id = c.id
+         WHERE ca.operator_id = ? AND ca.status = 'active'
+         ORDER BY ca.assigned_at DESC, c.date_opened DESC`,
+        [user.id],
+      )
+      : await db.query('SELECT * FROM cases ORDER BY date_opened DESC');
+    const cases = response.values || [];
+    const activeCaseId = get().activeCaseId;
+    const activeCaseIsVisible = !activeCaseId || cases.some((entry: Case) => entry.id === activeCaseId);
+    set(activeCaseIsVisible ? { cases } : { cases, activeCaseId: null, graphElements: [], notes: [], selectedNodeId: null, selectedEdgeId: null });
   },
 
   setActiveCase: (id) => {
@@ -238,7 +270,93 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     await get().loadCases();
   },
 
+  loadCaseAssignments: async (caseId) => {
+    assertCurrentPermission('case:assign');
+    const db = await getDb();
+    const response = await db.query(
+      `SELECT ca.*, u.badge AS operator_badge, u.name AS operator_name
+       FROM case_assignments ca
+       INNER JOIN users u ON u.id = ca.operator_id
+       WHERE ca.case_id = ?
+       ORDER BY CASE ca.status WHEN 'active' THEN 0 ELSE 1 END, ca.assigned_at DESC`,
+      [caseId],
+    );
+    set({ caseAssignments: (response.values || []).map((record: any): CaseAssignment => ({
+      id: record.id,
+      caseId: record.case_id,
+      operatorId: record.operator_id,
+      operatorBadge: record.operator_badge,
+      operatorName: record.operator_name,
+      status: record.status === 'removed' ? 'removed' : 'active',
+      note: record.assignment_note || '',
+      assignedBy: record.assigned_by,
+      assignedAt: record.assigned_at,
+      removedBy: record.removed_by || null,
+      removedAt: record.removed_at || null,
+      removalReason: record.removal_reason || null,
+    })) });
+  },
+
+  loadAssignableFieldOperators: async () => {
+    assertCurrentPermission('case:assign');
+    const db = await getDb();
+    const response = await db.query("SELECT id, badge, name, last_login FROM users WHERE role = 'field' AND COALESCE(status, 'active') = 'active' ORDER BY badge COLLATE NOCASE ASC");
+    set({ assignableFieldOperators: (response.values || []).map((record: any): AssignableFieldOperator => ({ id: record.id, badge: record.badge, name: record.name, lastLogin: record.last_login || null })) });
+  },
+
+  assignFieldOperator: async (caseId, operatorId, note) => {
+    assertCurrentPermission('case:assign');
+    const cleanNote = note.trim().slice(0, 500);
+    const db = await getDb();
+    const [caseResult, operatorResult] = await Promise.all([
+      db.query('SELECT reference_number, status FROM cases WHERE id = ? LIMIT 1', [caseId]),
+      db.query("SELECT id, badge, name FROM users WHERE id = ? AND role = 'field' AND COALESCE(status, 'active') = 'active' LIMIT 1", [operatorId]),
+    ]);
+    const caseRecord = caseResult.values?.[0];
+    const operator = operatorResult.values?.[0];
+    if (!caseRecord) throw new Error('Operation record was not found.');
+    if (caseRecord.status !== 'active') throw new Error('Only active operations can be assigned to field operators.');
+    if (!operator) throw new Error('Select an active field operator.');
+
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      const existing = await db.query('SELECT id FROM case_assignments WHERE case_id = ? AND operator_id = ? LIMIT 1', [caseId, operatorId]);
+      if (existing.values?.[0]?.id) {
+        await db.run('UPDATE case_assignments SET status = ?, assignment_note = ?, assigned_by = ?, assigned_at = ?, updated_at = ?, removed_by = NULL, removed_at = NULL, removal_reason = NULL WHERE id = ?', ['active', cleanNote || null, currentOperator(), now, now, existing.values[0].id]);
+      } else {
+        await db.run('INSERT INTO case_assignments (id, case_id, operator_id, status, assignment_note, assigned_by, assigned_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [createId('assignment'), caseId, operatorId, 'active', cleanNote || null, currentOperator(), now, now]);
+      }
+      await appendAuditEntry(db, 'ASSIGN_FIELD_OPERATOR', caseId, `Assigned ${operator.badge} to ${caseRecord.reference_number}${cleanNote ? `: ${cleanNote}` : ''}`, currentOperator());
+    });
+    await get().loadCaseAssignments(caseId);
+  },
+
+  removeFieldAssignment: async (assignmentId, reason) => {
+    assertCurrentPermission('case:assign');
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 500) throw new Error('A removal reason between 5 and 500 characters is required.');
+    const db = await getDb();
+    const response = await db.query(
+      `SELECT ca.*, c.reference_number, u.badge AS operator_badge
+       FROM case_assignments ca
+       INNER JOIN cases c ON c.id = ca.case_id
+       INNER JOIN users u ON u.id = ca.operator_id
+       WHERE ca.id = ? LIMIT 1`,
+      [assignmentId],
+    );
+    const assignment = response.values?.[0];
+    if (!assignment) throw new Error('Assignment record was not found.');
+    if (assignment.status !== 'active') throw new Error('This assignment has already been removed.');
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run('UPDATE case_assignments SET status = ?, updated_at = ?, removed_by = ?, removed_at = ?, removal_reason = ? WHERE id = ?', ['removed', now, currentOperator(), now, cleanReason, assignmentId]);
+      await appendAuditEntry(db, 'REMOVE_FIELD_ASSIGNMENT', assignment.case_id, `Removed ${assignment.operator_badge} from ${assignment.reference_number}: ${cleanReason}`, currentOperator());
+    });
+    await get().loadCaseAssignments(assignment.case_id);
+  },
+
   loadGraphElements: async (caseId) => {
+    await ensureCaseAccess(caseId);
     const db = await getDb();
     const nodesResponse = await db.query('SELECT * FROM nodes WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
     const edgesResponse = await db.query('SELECT * FROM edges WHERE case_id = ? ORDER BY created_at ASC', [caseId]);
@@ -283,6 +401,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const { activeCaseId, graphElements } = get();
     const cleanLabel = label.trim().slice(0, 160);
     if (!activeCaseId) throw new Error('Select a case before adding an entity.');
+    await ensureCaseAccess(activeCaseId);
     if (!ENTITY_TYPES.has(nodeType)) throw new Error('Unsupported entity type.');
     if (!cleanLabel) throw new Error('Entity label is required.');
     const id = createId('node');
@@ -403,6 +522,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   toggleFilter: (nodeType) => set((state) => ({ hiddenNodeTypes: state.hiddenNodeTypes.includes(nodeType) ? state.hiddenNodeTypes.filter((type) => type !== nodeType) : [...state.hiddenNodeTypes, nodeType] })),
 
   loadNotes: async (caseId) => {
+    await ensureCaseAccess(caseId);
     await ensureNotesTable();
     const db = await getDb();
     const response = await db.query('SELECT * FROM notes WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
@@ -415,6 +535,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const { activeCaseId, notes, graphElements } = get();
     const cleanContent = content.trim().slice(0, MAX_NOTE_LENGTH);
     if (!activeCaseId || !cleanContent) return;
+    await ensureCaseAccess(activeCaseId);
     const validNodeIds = new Set(graphElements.filter((element) => !element.data.source).map((element) => element.data.id));
     const safeLinkedNodes = [...new Set(linkedNodeIds.filter((id) => validNodeIds.has(id)))];
     const id = createId('note');

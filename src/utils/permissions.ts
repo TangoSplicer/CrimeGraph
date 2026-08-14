@@ -7,6 +7,7 @@ export type Permission =
   | 'case:restore'
   | 'case:import'
   | 'case:export'
+  | 'case:assign'
   | 'intelligence:create'
   | 'intelligence:update'
   | 'intelligence:delete'
@@ -19,17 +20,17 @@ export type Permission =
 
 const POLICY: Record<UserRole, readonly Permission[]> = {
   admin: [
-    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export',
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign',
     'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'audit:view',
     'operator:provision', 'pairing:manage', 'system:wipe',
   ],
   supervisor: [
-    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export',
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign',
     'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'audit:view',
     'pairing:manage',
   ],
   analyst: [
-    'case:create', 'case:import', 'case:export',
+    'case:create', 'case:import', 'case:export', 'case:assign',
     'intelligence:create', 'intelligence:update', 'intelligence:delete',
   ],
   field: ['intelligence:create', 'intelligence:resubmit'],

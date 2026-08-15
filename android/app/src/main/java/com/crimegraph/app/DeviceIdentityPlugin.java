@@ -2,9 +2,16 @@ package com.crimegraph.app;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.os.Build;
+import android.os.StatFs;
 import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyInfo;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+
+import androidx.biometric.BiometricManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -13,6 +20,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.nio.charset.StandardCharsets;
+import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -120,6 +128,70 @@ public class DeviceIdentityPlugin extends Plugin {
         StringBuilder output = new StringBuilder();
         for (byte item : digest) output.append(String.format("%02X", item));
         return output.toString();
+    }
+
+    private String keySecurityLevel(KeyStore keyStore, String alias) {
+        try {
+            Key key = keyStore.getKey(alias, null);
+            if (key == null) return "unavailable";
+            KeyFactory factory = KeyFactory.getInstance(key.getAlgorithm(), "AndroidKeyStore");
+            KeyInfo keyInfo = factory.getKeySpec(key, KeyInfo.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                int level = keyInfo.getSecurityLevel();
+                if (level == KeyProperties.SECURITY_LEVEL_STRONGBOX) return "strongbox";
+                if (level == KeyProperties.SECURITY_LEVEL_TRUSTED_ENVIRONMENT) return "trusted-environment";
+                if (level == KeyProperties.SECURITY_LEVEL_SOFTWARE) return "software";
+                return "unknown";
+            }
+            return keyInfo.isInsideSecureHardware() ? "hardware-backed-level-not-exposed" : "software";
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
+    private String biometricReadiness() {
+        try {
+            int status = BiometricManager.from(getContext()).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
+            if (status == BiometricManager.BIOMETRIC_SUCCESS) return "available";
+            if (status == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) return "hardware-present-not-enrolled";
+            if (status == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) return "unavailable";
+            if (status == BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE) return "temporarily-unavailable";
+            return "unknown";
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
+    @PluginMethod
+    public void getAssurance(PluginCall call) {
+        try {
+            KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
+            keyStore.load(null);
+            SharedPreferences preferences = storagePreferences();
+            boolean identityKeyPresent = keyStore.containsAlias(IDENTITY_KEY_ALIAS);
+            boolean storageWrapKeyPresent = keyStore.containsAlias(STORAGE_WRAP_KEY_ALIAS);
+            boolean storageSecretPresent = preferences.contains(WRAPPED_SECRET) && preferences.contains(WRAPPED_SECRET_IV) && storageWrapKeyPresent;
+            ApplicationInfo applicationInfo = getContext().getApplicationInfo();
+            boolean backupExcluded = (applicationInfo.flags & ApplicationInfo.FLAG_ALLOW_BACKUP) == 0;
+            StatFs stat = new StatFs(getContext().getFilesDir().getAbsolutePath());
+            PackageInfo packageInfo = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
+
+            JSObject result = new JSObject();
+            result.put("identityKeyPresent", identityKeyPresent);
+            result.put("storageSecretPresent", storageSecretPresent);
+            result.put("identityKeySecurityLevel", identityKeyPresent ? keySecurityLevel(keyStore, IDENTITY_KEY_ALIAS) : "unavailable");
+            result.put("storageWrapKeySecurityLevel", storageWrapKeyPresent ? keySecurityLevel(keyStore, STORAGE_WRAP_KEY_ALIAS) : "unavailable");
+            result.put("backupExcluded", backupExcluded);
+            result.put("availableStorageBytes", stat.getAvailableBytes());
+            result.put("biometricReadiness", biometricReadiness());
+            result.put("appVersion", packageInfo.versionName == null ? "unknown" : packageInfo.versionName);
+            result.put("appVersionCode", Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? packageInfo.getLongVersionCode() : packageInfo.versionCode);
+            result.put("androidVersion", Build.VERSION.RELEASE == null ? "unknown" : Build.VERSION.RELEASE);
+            result.put("sdkInt", Build.VERSION.SDK_INT);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("Unable to inspect device assurance state.", error);
+        }
     }
 
     @PluginMethod

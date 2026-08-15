@@ -2,6 +2,7 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 
 interface NativeDeviceIdentityPlugin {
   getPublicIdentity(): Promise<{ deviceId: string; publicKey: string; fingerprint: string }>;
+  getAssurance(): Promise<DeviceAssurance>;
   getStorageSecret(): Promise<{ secret: string }>;
   destroyStorageSecret(): Promise<void>;
   sign(options: { payload: string }): Promise<{ signature: string }>;
@@ -16,6 +17,20 @@ export interface DeviceIdentity {
   fingerprint: string;
 }
 
+export interface DeviceAssurance {
+  identityKeyPresent: boolean;
+  storageSecretPresent: boolean;
+  identityKeySecurityLevel: 'strongbox' | 'trusted-environment' | 'software' | 'hardware-backed-level-not-exposed' | 'unavailable' | 'unknown';
+  storageWrapKeySecurityLevel: 'strongbox' | 'trusted-environment' | 'software' | 'hardware-backed-level-not-exposed' | 'unavailable' | 'unknown';
+  backupExcluded: boolean;
+  availableStorageBytes: number;
+  biometricReadiness: 'available' | 'hardware-present-not-enrolled' | 'temporarily-unavailable' | 'unavailable' | 'unknown';
+  appVersion: string;
+  appVersionCode: number;
+  androidVersion: string;
+  sdkInt: number;
+}
+
 export const isValidDeviceStorageSecret = (secret: unknown): secret is string =>
   typeof secret === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(secret);
 
@@ -23,6 +38,11 @@ const assertNativeIdentitySupport = (): void => {
   if (!Capacitor.isNativePlatform()) {
     throw new Error('Verified pairing is available only in the native Android application. Browser previews do not expose a secure device identity.');
   }
+};
+
+export const getDeviceAssurance = async (): Promise<DeviceAssurance> => {
+  assertNativeIdentitySupport();
+  return NativeDeviceIdentity.getAssurance();
 };
 
 export const getDeviceIdentity = async (): Promise<DeviceIdentity> => {

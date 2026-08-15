@@ -69,7 +69,7 @@ describe('protected database bootstrap', () => {
     const db = makeDatabase();
     mocks.connection.isConnection.mockResolvedValue({ result: false });
     mocks.connection.createConnection.mockResolvedValue(db);
-    const { getDb } = await import('./db');
+    const { getDb, getDatabaseRuntimeStatus } = await import('./db');
 
     const [first, second, third] = await Promise.all([getDb(), getDb(), getDb()]);
 
@@ -81,6 +81,7 @@ describe('protected database bootstrap', () => {
     expect(mocks.connection.createConnection).toHaveBeenCalledWith('crimegraph_db', true, 'secret', 1, false);
     expect(mocks.connection.createConnection).toHaveBeenCalledTimes(1);
     expect(db.open).toHaveBeenCalledTimes(1);
+    expect(getDatabaseRuntimeStatus()).toMatchObject({ open: true, lastOpenedAt: expect.any(String) });
   });
 
   it('reconciles a stale JavaScript connection and recreates it when native open reports no available connection', async () => {

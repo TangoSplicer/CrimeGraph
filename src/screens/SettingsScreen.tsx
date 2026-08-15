@@ -6,6 +6,7 @@ import { can, USER_ROLES, type UserRole } from '../utils/permissions';
 import { usePairingStore } from '../stores/pairingStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
+import { collectDeviceAssurance, formatBytes, type DeviceAssuranceSnapshot } from '../utils/deviceAssurance';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, logout, addOperator, operators, loadOperators, disableOperator, reinstateOperator, resetOperatorPin, changeOperatorRole } = useAuthStore();
@@ -24,6 +25,7 @@ export const SettingsScreen: React.FC = () => {
     clearPendingVerification,
   } = usePairingStore();
   const canManagePairing = can(currentUser?.role, 'pairing:manage');
+  const canViewDeviceAssurance = currentUser?.role === 'admin' || currentUser?.role === 'supervisor';
 
   const { 
     isScanning, 
@@ -51,6 +53,9 @@ export const SettingsScreen: React.FC = () => {
   const [pairingCode, setPairingCode] = useState('');
   const [receivedPairingCode, setReceivedPairingCode] = useState('');
   const [pairingMsg, setPairingMsg] = useState('');
+  const [deviceAssurance, setDeviceAssurance] = useState<DeviceAssuranceSnapshot | null>(null);
+  const [deviceAssuranceMsg, setDeviceAssuranceMsg] = useState('');
+  const [isLoadingDeviceAssurance, setIsLoadingDeviceAssurance] = useState(false);
 
   useEffect(() => {
     if (currentUser?.role === 'admin') {
@@ -64,6 +69,24 @@ export const SettingsScreen: React.FC = () => {
     loadPeers().catch((error) => setPairingMsg(error instanceof Error ? error.message : 'Peer trust registry is unavailable.'));
     loadIdentity().catch((error) => setPairingMsg(error instanceof Error ? error.message : 'Secure device identity is unavailable.'));
   }, [canManagePairing, loadIdentity, loadPeers]);
+
+  useEffect(() => {
+    if (!canViewDeviceAssurance) { setDeviceAssurance(null); return; }
+    void refreshDeviceAssurance();
+  }, [canViewDeviceAssurance]);
+
+  const refreshDeviceAssurance = async () => {
+    if (!canViewDeviceAssurance) return;
+    setIsLoadingDeviceAssurance(true);
+    setDeviceAssuranceMsg('');
+    try {
+      setDeviceAssurance(await collectDeviceAssurance());
+    } catch (error) {
+      setDeviceAssuranceMsg(error instanceof Error ? error.message : 'Device assurance state could not be inspected.');
+    } finally {
+      setIsLoadingDeviceAssurance(false);
+    }
+  };
 
   const handleWipe = async () => {
     if (window.confirm("CRITICAL WARNING: This will permanently destroy all local intelligence. Proceed?")) {
@@ -194,6 +217,28 @@ export const SettingsScreen: React.FC = () => {
           <p className="text-[10px] text-[#7880a0] uppercase tracking-widest mb-4">Clearance: {currentUser?.role}</p>
           <button onClick={logout} className="w-full py-3 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase hover:bg-[#252a3a]">Terminate Session</button>
         </section>
+
+        {canViewDeviceAssurance && (
+          <section className="bg-[#1c2030] border border-[#3a7bd5] rounded-lg p-4">
+            <div className="flex items-start justify-between gap-3 border-b border-[#3a7bd5]/30 pb-3 mb-4"><div><h2 className="text-xs font-bold text-[#72a7f0] uppercase tracking-widest">Device assurance</h2><p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">Read-only local posture. Hardware security is reported only when the Android platform exposes its actual key level.</p></div><button onClick={() => void refreshDeviceAssurance()} disabled={isLoadingDeviceAssurance} className="shrink-0 rounded border border-[#3a7bd5] px-3 py-2 text-[10px] font-bold uppercase text-[#72a7f0] disabled:opacity-40">{isLoadingDeviceAssurance ? 'Checking…' : 'Refresh'}</button></div>
+            {!deviceAssurance && !deviceAssuranceMsg && <p className="text-xs text-[#7880a0]">Loading device posture…</p>}
+            {deviceAssurance && <div className="space-y-3"><div className={`rounded border p-3 ${deviceAssurance.auditChain.valid && deviceAssurance.encryptedDatabase && deviceAssurance.storageSecretAvailable !== false ? 'border-[#1d9a6c]/60 bg-[#1d9a6c]/10' : 'border-[#f39c12]/60 bg-[#f39c12]/10'}`}><p className="text-[10px] font-bold uppercase tracking-widest text-[#dde1ec]">{deviceAssurance.platform === 'android-native' ? 'Android native posture' : 'Browser preview posture'}</p><p className="mt-1 text-[10px] leading-relaxed text-[#9aa3bb]">Generated {new Date(deviceAssurance.generatedAt).toLocaleString()}. Browser preview cannot attest keystore, storage-secret, backup, biometric, or free-space state.</p></div><div className="grid grid-cols-2 gap-2 text-[10px]">{[
+              ['App version', `${deviceAssurance.appVersion}${deviceAssurance.appVersionCode !== null ? ` (${deviceAssurance.appVersionCode})` : ''}`],
+              ['Platform', deviceAssurance.androidVersion ? `Android ${deviceAssurance.androidVersion} / API ${deviceAssurance.sdkInt}` : 'Browser preview'],
+              ['Encrypted database', deviceAssurance.encryptedDatabase ? 'Device-bound native' : 'Not attested in preview'],
+              ['Storage secret', deviceAssurance.storageSecretAvailable === null ? 'Not available in preview' : deviceAssurance.storageSecretAvailable ? 'Present' : 'Unavailable'],
+              ['Identity key', deviceAssurance.identityKeyPresent === null ? 'Not available in preview' : deviceAssurance.identityKeyPresent ? 'Present' : 'Unavailable'],
+              ['Identity key level', deviceAssurance.identityKeySecurityLevel.replace(/-/g, ' ')],
+              ['Storage-wrap key level', deviceAssurance.storageWrapKeySecurityLevel.replace(/-/g, ' ')],
+              ['Backup exclusion', deviceAssurance.backupExcluded === null ? 'Not available in preview' : deviceAssurance.backupExcluded ? 'Enabled' : 'Not enabled'],
+              ['Biometric readiness', deviceAssurance.biometricReadiness.replace(/-/g, ' ')],
+              ['Available storage', formatBytes(deviceAssurance.availableStorageBytes)],
+              ['Protected media', `${deviceAssurance.protectedMediaCount} encrypted envelope${deviceAssurance.protectedMediaCount === 1 ? '' : 's'}`],
+              ['Last database open', deviceAssurance.lastDatabaseOpenedAt ? new Date(deviceAssurance.lastDatabaseOpenedAt).toLocaleString() : 'Not recorded'],
+            ].map(([label, value]) => <div key={label} className="rounded border border-[#252a3a] bg-[#0c0e14] p-2"><p className="uppercase tracking-wide text-[#7880a0]">{label}</p><p className="mt-1 break-words text-[#dde1ec] capitalize">{value}</p></div>)}</div><div className={`rounded border p-3 ${deviceAssurance.auditChain.valid ? 'border-[#1d9a6c]/60 bg-[#1d9a6c]/10' : 'border-[#c0392b]/60 bg-[#c0392b]/10'}`}><p className="text-[10px] font-bold uppercase tracking-widest text-[#dde1ec]">Audit chain: {deviceAssurance.auditChain.valid ? 'verified' : 'verification failed'}</p><p className="mt-1 text-[10px] text-[#9aa3bb]">{deviceAssurance.auditChain.verifiedEntries} hash-linked record{deviceAssurance.auditChain.verifiedEntries === 1 ? '' : 's'} verified{deviceAssurance.auditChain.legacyEntries ? `; ${deviceAssurance.auditChain.legacyEntries} legacy record${deviceAssurance.auditChain.legacyEntries === 1 ? '' : 's'} retained` : ''}{deviceAssurance.auditChain.brokenEntryId ? `; first broken entry ${deviceAssurance.auditChain.brokenEntryId}` : ''}.</p></div>{deviceAssurance.storageHealth !== 'healthy' && <p className={`rounded border p-3 text-[10px] leading-relaxed ${deviceAssurance.storageHealth === 'critical' ? 'border-[#c0392b] text-[#ff9d95]' : 'border-[#f39c12] text-[#f7c86b]'}`}>{deviceAssurance.storageHealth === 'critical' ? 'Critical low-storage condition. Preserve exports through approved procedures and free space before collecting additional media.' : deviceAssurance.storageHealth === 'warning' ? 'Low storage warning. Monitor free space before collecting large protected media.' : 'Free-space posture is unavailable outside the native Android application.'}</p>}</div>}
+            {deviceAssuranceMsg && <p role="status" className="mt-3 text-[10px] font-bold leading-relaxed text-[#f7c86b]">{deviceAssuranceMsg}</p>}
+          </section>
+        )}
 
         {/* TACTICAL MESH NETWORK (DARK SYNC) - AVAILABLE TO ALL OPERATORS */}
         <section className="bg-[#1c2030] border border-[#2ecc71] rounded-lg p-4">

@@ -14,6 +14,12 @@ CREATE TABLE IF NOT EXISTS users (
   disabled_reason TEXT
 );
 
+CREATE TABLE IF NOT EXISTS storage_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS cases (
   id TEXT PRIMARY KEY,
   reference_number TEXT UNIQUE NOT NULL,

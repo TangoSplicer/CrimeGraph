@@ -7,6 +7,7 @@ const sqlite: CapacitorSQLitePlugin = CapacitorSQLite;
 const sqliteConnection = new SQLiteConnection(sqlite);
 let dbInstance: any = null;
 let databaseInitPromise: Promise<any> | null = null;
+let lastDatabaseOpenedAt: string | null = null;
 let webStoreReady: Promise<void> | null = null;
 const DATABASE_NAME = 'crimegraph_db';
 
@@ -14,6 +15,16 @@ interface DatabaseSecurityMode {
   encrypted: boolean;
   mode: 'no-encryption' | 'encryption' | 'secret';
 }
+
+export interface DatabaseRuntimeStatus {
+  open: boolean;
+  lastOpenedAt: string | null;
+}
+
+export const getDatabaseRuntimeStatus = (): DatabaseRuntimeStatus => ({
+  open: dbInstance !== null,
+  lastOpenedAt: lastDatabaseOpenedAt,
+});
 
 const prepareDatabaseSecurity = async (): Promise<DatabaseSecurityMode> => {
   if (!Capacitor.isNativePlatform()) return { encrypted: false, mode: 'no-encryption' };
@@ -83,6 +94,7 @@ export async function destroyProtectedLocalStorage(): Promise<void> {
   }
   dbInstance = null;
   databaseInitPromise = null;
+  lastDatabaseOpenedAt = null;
 }
 
 const isMissingNativeConnectionError = (error: unknown): boolean =>
@@ -182,9 +194,14 @@ async function initialiseDatabase() {
       );
     `;
     await db.execute(createTables);
+    const openedAt = new Date().toISOString();
     await db.run(
       'INSERT OR REPLACE INTO storage_metadata (key, value, updated_at) VALUES (?, ?, ?)',
-      ['storage_encryption', Capacitor.isNativePlatform() ? 'device-bound-native' : 'web-preview-unencrypted', new Date().toISOString()],
+      ['storage_encryption', Capacitor.isNativePlatform() ? 'device-bound-native' : 'web-preview-unencrypted', openedAt],
+    );
+    await db.run(
+      'INSERT OR REPLACE INTO storage_metadata (key, value, updated_at) VALUES (?, ?, ?)',
+      ['last_database_opened_at', openedAt, openedAt],
     );
     
     // Live migrations are intentionally additive so existing device-local intelligence remains readable.
@@ -248,6 +265,7 @@ async function initialiseDatabase() {
     }
 
     dbInstance = db;
+    lastDatabaseOpenedAt = openedAt;
     return db;
   } catch (error) {
     console.error('Database Error:', error);

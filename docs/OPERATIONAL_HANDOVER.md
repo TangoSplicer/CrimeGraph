@@ -4,7 +4,7 @@
 
 **Mainline merge:** Pull request [#1](https://github.com/TangoSplicer/CrimeGraph/pull/1)
 
-**Scope:** device-bound protected storage, secure evidence media, controlled forensic dossiers and disclosure records, analyst-controlled quality review, secure operator lifecycle management, structured field work queues and evidence intake, truthful device assurance, and release assurance.
+**Scope:** device-bound protected storage, secure evidence media, controlled forensic dossiers and disclosure records, analyst-controlled quality review, case playbooks, local lead registers, secure operator lifecycle management, structured field work queues and evidence intake, truthful device assurance, and release assurance.
 
 > CrimeGraph remains an **offline, analyst-controlled case-intelligence application**. It records attributable observations and evidence provenance; it does not perform automated person-level risk scoring or opaque predictions.
 
@@ -15,7 +15,7 @@
 | Administrator | Provisions operators; audits lifecycle actions; performs audited emergency wipe; manages system configuration, markings, and controlled dissemination. | PIN reset, role change, disablement, reinstatement, and wipe require high-risk reauthentication. |
 | Supervisor | Reviews field submissions, approves observations, or returns them with a required correction note; may assign active field operators, apply markings, prepare controlled dossiers, and inspect device assurance. | Review, marking, tasking, and dissemination are explicit and audit-recorded; none is an automated confidence judgment. |
 | Analyst | Creates, edits, links, marks, and exports permitted intelligence records; may assign active field operators and prepare authorized dossiers. | Cannot review field submissions, manage trusted pairing, or view device assurance. |
-| Field operator | Captures and submits observations and evidence only for locally assigned active cases; can correct only records returned to that operator and complete only their own assigned task cards. | New submissions are marked **pending review**; case creation, import, marking, assignment, dossier preparation, and broad editing are not granted. |
+| Field operator | Captures and submits observations and evidence only for locally assigned active cases; can correct only records returned to that operator, complete only their own assigned task cards, and record a locally sourced lead. | New submissions are marked **pending review**; case creation, import, marking, assignment, lead disposition/promotion, dossier preparation, and broad editing are not granted. |
 | Read-only operator | Views permitted local intelligence. | Cannot create, alter, export, review, pair, or wipe. |
 
 ## Core field-to-supervisor workflow
@@ -31,6 +31,12 @@ A field operator sees pending, approved, or returned state in the graph workspac
 An administrator opens **SETTINGS** and uses **Operator lifecycle** to list locally provisioned non-administrator accounts. Disablement and reinstatement require a reason; PIN resets and role changes revoke biometric sign-in. Every lifecycle action requires high-risk confirmation and creates a hash-linked audit entry. A disabled account cannot use PIN or biometric sign-in.
 
 An administrator, supervisor, or analyst uses **ASSIGN FIELD** on an active operation in **HOME**. They select an active field operator and may add an assignment note. The field operator’s HOME screen then becomes a local work queue showing only active assigned operations and their notes. Removing an assignment requires a reason, is audited, and prevents that field account from loading the operation. Assignments remain local to the encrypted device; they do not transfer case intelligence.
+
+## Case playbook and local lead register
+
+The **Case playbook** is available in the **Analysis** panel to administrators, supervisors, and analysts. It records optional case-scoped milestones with an objective, category, accountable role, due window, blocker note, completion note, linked local objects, and hash-ledger state transition. A blocked or overdue milestone is a work-state cue only; it must never be read as a personnel-performance score, case-priority prediction, or likelihood-of-outcome assessment.
+
+The **Local lead register** preserves an incoming follow-up opportunity with its stated source type, source reference, received time, sensitivity marking, factual summary, and disposition. Field operators may create a lead only in a locally assigned case. Administrators, supervisors, and analysts may review, action, close, or deliberately promote a lead. Promotion creates a linked intelligence node in the same local transaction and leaves the lead record intact; it does not validate the source or convert an observation into a legal conclusion.
 
 ## Controlled dossiers, markings, and local analysis
 
@@ -62,6 +68,8 @@ Administrators and supervisors can open **SETTINGS → Device assurance**. The p
 | Backup posture | Android backup and data transfer are disabled through the manifest and extraction rules. | Verify this remains true after any future manifest merge and compare the installed-app assurance value to approved device-management evidence. |
 | Device assurance | Admins and supervisors can refresh an installed-device posture snapshot without accessing case contents. | The view must report unavailable or OS-undifferentiated capabilities explicitly; never infer StrongBox or TEE. |
 | Controlled dossier | Dossiers are user-mediated files with manifest, signature/verification state, redaction profile, stated purpose, recipient description, and disclosure record. | Treat any failed import verification as a hard stop and retain the source file for approved incident handling. |
+| Case playbook | Managers record bounded local milestones, blockers, completion notes, and accountable role. | Milestone cues record work state only. Do not use them to rank personnel, forecast case outcomes, or generate automatic task escalation. |
+| Local lead register | Leads retain source, sensitivity, status, disposition, and deliberate promotion history. | A promoted lead remains a source-bound local record; promotion must be audited and is never an automatic source-validation decision. |
 
 ## Required routine checks
 
@@ -71,6 +79,7 @@ Administrators and supervisors can open **SETTINGS → Device assurance**. The p
 | Before signed release | Release owner | Complete [`DEVICE_ACCEPTANCE.md`](./DEVICE_ACCEPTANCE.md) and follow [`RELEASE_SIGNING.md`](./RELEASE_SIGNING.md). | Device acceptance record, artifact digest, certificate fingerprint, approval reference, and exceptions. |
 | After supervisory workflow exercise | Supervisor or auditor | Open the audit ledger and verify the hash chain. | Valid chain plus decision / correction entries. |
 | Before any authorized disclosure | Analyst, supervisor, or administrator | Verify the dossier manifest, redaction profile, stated purpose, recipient, authorization reference where applicable, and disclosure-register record. | Verified dossier and disclosure-register entry; no background or mesh transfer. |
+| After a case-planning or lead-review exercise | Supervisor or auditor | Verify playbook and lead lifecycle entries in the audit ledger, including any promotion into intelligence. | Valid chain plus milestone, disposition, and promotion entries; source remains identifiable in the promoted node metadata. |
 | After application upgrade | Technical owner | Verify Android backup controls, native plugin registry, key creation/reopen, encrypted evidence preview, device assurance output, and legacy attachment migration. | Release-readiness record updated with results. |
 
 ## Release commands
@@ -87,7 +96,7 @@ Continuous integration pins the Capacitor 8 release toolchain to Node 22, Java 2
 
 ## Guardrails for future changes
 
-New collaboration transports, including Bluetooth or mesh case transfer, must remain disabled until a complete authenticated secure-session protocol has been designed, threat-modelled, implemented, and independently reviewed. Do not make review status, quality findings, task status, or markings into an automated decision or a proxy for person-level assessment. Any future schema change must remain additive or include a tested encrypted-storage migration path. Do not alter templates to pre-fill evidential conclusions or change device assurance wording to infer hardware capability that Android does not report.
+New collaboration transports, including Bluetooth or mesh case transfer, must remain disabled until a complete authenticated secure-session protocol has been designed, threat-modelled, implemented, and independently reviewed. Do not make review status, quality findings, task status, lead status, milestone state, or markings into an automated decision or a proxy for person-level assessment. Any future schema change must remain additive or include a tested encrypted-storage migration path. Do not alter templates to pre-fill evidential conclusions or change device assurance wording to infer hardware capability that Android does not report.
 
 ## References
 

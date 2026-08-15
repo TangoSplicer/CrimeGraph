@@ -8,11 +8,13 @@ export type Permission =
   | 'case:import'
   | 'case:export'
   | 'case:assign'
+  | 'case:mark'
   | 'intelligence:create'
   | 'intelligence:update'
   | 'intelligence:delete'
   | 'intelligence:review'
   | 'intelligence:resubmit'
+  | 'field:task:complete'
   | 'audit:view'
   | 'operator:provision'
   | 'pairing:manage'
@@ -20,20 +22,20 @@ export type Permission =
 
 const POLICY: Record<UserRole, readonly Permission[]> = {
   admin: [
-    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign',
-    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'audit:view',
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign', 'case:mark',
+    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'field:task:complete', 'audit:view',
     'operator:provision', 'pairing:manage', 'system:wipe',
   ],
   supervisor: [
-    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign',
-    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'audit:view',
+    'case:create', 'case:archive', 'case:restore', 'case:import', 'case:export', 'case:assign', 'case:mark',
+    'intelligence:create', 'intelligence:update', 'intelligence:delete', 'intelligence:review', 'field:task:complete', 'audit:view',
     'pairing:manage',
   ],
   analyst: [
-    'case:create', 'case:import', 'case:export', 'case:assign',
+    'case:create', 'case:import', 'case:export', 'case:assign', 'case:mark',
     'intelligence:create', 'intelligence:update', 'intelligence:delete',
   ],
-  field: ['intelligence:create', 'intelligence:resubmit'],
+  field: ['intelligence:create', 'intelligence:resubmit', 'field:task:complete'],
   readonly: [],
 };
 

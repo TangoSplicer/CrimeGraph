@@ -7,7 +7,7 @@ import { BottomSheet } from '../components/shared/BottomSheet';
 import { useCaseStore } from '../stores/caseStore';
 import { useAuthStore } from '../stores/authStore';
 import { can } from '../utils/permissions';
-import { buildGraphInsights } from '../utils/graphInsights';
+import { buildGraphInsights, searchCaseContent } from '../utils/graphInsights';
 import { readEncryptedEvidenceMedia } from '../utils/secureMedia';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
@@ -18,12 +18,17 @@ export const GraphWorkspaceScreen: React.FC = () => {
     graphElements, selectedNodeId, setSelectedNodeId, selectedEdgeId, setSelectedEdgeId,
     connectingFromId, setConnectingFromId, deleteNode, deleteEdge, updateNode, // 🚀 NEW updateNode
     activeCaseId, cases, exportActiveCase, hiddenNodeTypes, toggleFilter,
-    notes, addNote, deleteNote
+    notes, addNote, deleteNote, dataMarkings, disclosureRecords, loadDataMarkings, addDataMarking, removeDataMarking, loadDisclosureRecords
   } = useCaseStore();
   
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [isDossierOpen, setIsDossierOpen] = useState(false);
+  const [newCaseMarking, setNewCaseMarking] = useState('');
+  const [markingInstructions, setMarkingInstructions] = useState('');
+  const [dossierMessage, setDossierMessage] = useState('');
+  const [caseSearch, setCaseSearch] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
   const [taggedNodes, setTaggedNodes] = useState<string[]>([]);
 
@@ -38,10 +43,12 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const currentUser = useAuthStore((state) => state.currentUser);
   const activeCase = cases.find(c => c.id === activeCaseId);
   const graphInsights = buildGraphInsights(graphElements, notes);
+  const caseSearchResults = searchCaseContent(graphElements, notes, caseSearch);
   const canCreateIntelligence = can(currentUser?.role, 'intelligence:create');
   const canUpdateIntelligence = can(currentUser?.role, 'intelligence:update');
   const canDeleteIntelligence = can(currentUser?.role, 'intelligence:delete');
   const canExportCase = can(currentUser?.role, 'case:export');
+  const canMarkCase = can(currentUser?.role, 'case:mark');
 
   useEffect(() => {
     if (!activeCaseId) navigate('/');
@@ -56,6 +63,13 @@ export const GraphWorkspaceScreen: React.FC = () => {
   );
   const canEditSelectedNode = canUpdateIntelligence || canResubmitSelectedNode;
   const getLabelForNode = (id: string) => graphElements.find(e => e.data.id === id)?.data.label || 'Unknown';
+  const openQualityRecord = (id: string) => {
+    const node = graphElements.find((element) => !element.data.source && element.data.id === id);
+    const edge = graphElements.find((element) => element.data.source && element.data.id === id);
+    if (node) { setSelectedNodeId(id); setIsAnalysisOpen(false); }
+    else if (edge) { setSelectedEdgeId(id); setIsAnalysisOpen(false); }
+    else if (notes.some((note) => note.id === id)) { setIsNotesOpen(true); setIsAnalysisOpen(false); }
+  };
 
   useEffect(() => {
     const evidence = selectedNode?.data.evidence;
@@ -106,6 +120,35 @@ export const GraphWorkspaceScreen: React.FC = () => {
     setIsEditingNode(false);
   };
 
+  const handleAddCaseMarking = async () => {
+    if (!activeCaseId || !newCaseMarking.trim()) return;
+    try {
+      await addDataMarking('case', activeCaseId, newCaseMarking, markingInstructions);
+      setNewCaseMarking('');
+      setMarkingInstructions('');
+      setDossierMessage('Case marking applied and recorded in the audit ledger.');
+    } catch (error) {
+      setDossierMessage(error instanceof Error ? error.message : 'Marking could not be applied.');
+    }
+  };
+
+  const handleRemoveCaseMarking = async (markingId: string) => {
+    try {
+      await removeDataMarking(markingId);
+      setDossierMessage('Case marking removed and recorded in the audit ledger.');
+    } catch (error) {
+      setDossierMessage(error instanceof Error ? error.message : 'Marking could not be removed.');
+    }
+  };
+
+  const openDossierControls = () => {
+    if (!activeCaseId) return;
+    setIsDossierOpen(true);
+    setDossierMessage('');
+    if (canMarkCase) loadDataMarkings(activeCaseId).catch((error) => setDossierMessage(error instanceof Error ? error.message : 'Markings are unavailable.'));
+    if (canExportCase) loadDisclosureRecords(activeCaseId).catch((error) => setDossierMessage(error instanceof Error ? error.message : 'Disclosure history is unavailable.'));
+  };
+
   const handleAddEditAttribute = () => setEditAttributes([...editAttributes, { key: '', value: '' }]);
   const handleUpdateEditAttribute = (index: number, field: 'key'|'value', val: string) => {
     const newAttrs = [...editAttributes];
@@ -146,7 +189,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
       )}
 
       {isAnalysisOpen && (
-        <div className="absolute top-[60px] right-4 z-30 bg-[#1c2030] border border-[#2ecc71]/60 rounded-lg shadow-xl w-72 p-3 mt-safe">
+        <div className="absolute top-[60px] right-4 z-30 max-h-[calc(100vh-9rem)] overflow-y-auto bg-[#1c2030] border border-[#2ecc71]/60 rounded-lg shadow-xl w-72 p-3 mt-safe">
           <div className="flex justify-between items-center border-b border-[#252a3a] pb-2 mb-3">
             <h3 className="text-[10px] font-bold text-[#2ecc71] uppercase tracking-widest">Case Structure Analysis</h3>
             <span className="text-[9px] text-[#7880a0]">No person-level scoring</span>
@@ -166,6 +209,16 @@ export const GraphWorkspaceScreen: React.FC = () => {
             <p>Evidence cue: {graphInsights.evidenceWithoutCustody} evidence item{graphInsights.evidenceWithoutCustody === 1 ? '' : 's'} without custody notes.</p>
             <p>Chronology cue: {graphInsights.itemsWithoutObservedTime} entity or evidence item{graphInsights.itemsWithoutObservedTime === 1 ? '' : 's'} without an observed or acquired time.</p>
           </div>
+          <div className="mt-3 border-t border-[#252a3a] pt-2">
+            <p className="mb-2 text-[9px] font-bold uppercase text-[#55c987]">Explainable quality workbench</p>
+            <div className="space-y-2">{graphInsights.qualityFindings.length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No configured quality cues are present.</p> : graphInsights.qualityFindings.map((finding) => <button key={finding.id} onClick={() => openQualityRecord(finding.affectedIds[0])} className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-left"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-[#dde1ec]">{finding.title}</span><span className={`text-[9px] font-bold uppercase ${finding.severity === 'attention' ? 'text-[#f7c86b]' : 'text-[#72a7f0]'}`}>{finding.severity}</span></div><p className="mt-1 text-[9px] leading-relaxed text-[#9aa3bb]">{finding.explanation}</p></button>)}</div>
+          </div>
+          <div className="mt-3 border-t border-[#252a3a] pt-2">
+            <label className="mb-1 block text-[9px] font-bold uppercase text-[#55c987]">Local case search</label>
+            <input value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Search entities, notes, evidence…" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[10px] text-white focus:border-[#55c987] focus:outline-none" />
+            {caseSearch.trim().length > 0 && <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">{caseSearch.trim().length < 2 ? <p className="text-[9px] text-[#7880a0]">Enter at least two characters.</p> : caseSearchResults.length === 0 ? <p className="text-[9px] italic text-[#7880a0]">No local records match this query.</p> : caseSearchResults.map((result) => <button key={`${result.kind}:${result.id}`} onClick={() => openQualityRecord(result.id)} className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-left"><p className="text-[10px] font-bold text-[#dde1ec]">{result.title}</p><p className="mt-1 text-[9px] text-[#7880a0]">{result.kind} · {result.summary}</p></button>)}</div>}
+          </div>
+          {(canMarkCase || canExportCase) && <button onClick={openDossierControls} className="mt-3 w-full rounded border border-[#b893e6] py-2 text-[10px] font-bold uppercase text-[#d8c8ff]">Dossier and marking controls</button>}
         </div>
       )}
 
@@ -219,6 +272,23 @@ export const GraphWorkspaceScreen: React.FC = () => {
           </button>
         )}
       </div>
+
+      <BottomSheet isOpen={isDossierOpen} onClose={() => setIsDossierOpen(false)} title="Dossier and disclosure controls">
+        <div className="space-y-5">
+          <section className="rounded border border-[#b893e6]/60 bg-[#1c2030] p-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#d8c8ff]">Case markings</h4>
+            <p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">Markings are retained on the source case and copied into each forensic dossier manifest. Redactions apply only to the exported projection.</p>
+            {canMarkCase && <div className="mt-3 space-y-2"><input value={newCaseMarking} onChange={(event) => setNewCaseMarking(event.target.value.toUpperCase())} maxLength={64} placeholder="MARKING (e.g. PERSONAL_DATA)" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><textarea value={markingInstructions} onChange={(event) => setMarkingInstructions(event.target.value)} maxLength={500} placeholder="Handling instructions (optional)" className="w-full min-h-20 rounded border border-[#454d66] bg-[#0c0e14] p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><button onClick={handleAddCaseMarking} disabled={!newCaseMarking.trim()} className="w-full rounded bg-[#b893e6] py-2.5 text-xs font-bold uppercase text-[#0c0e14] disabled:opacity-40">Apply case marking</button></div>}
+            <div className="mt-3 space-y-2">{dataMarkings.length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No markings are recorded for this operation.</p> : dataMarkings.filter((marking) => marking.objectType === 'case').map((marking) => <div key={marking.id} className="rounded border border-[#454d66] bg-[#0c0e14] p-2"><div className="flex items-start justify-between gap-3"><div><p className="font-mono text-[10px] font-bold text-[#dde1ec]">{marking.marking}</p>{marking.handlingInstructions && <p className="mt-1 text-[10px] text-[#9aa3bb]">{marking.handlingInstructions}</p>}</div>{canMarkCase && <button onClick={() => handleRemoveCaseMarking(marking.id)} className="text-[9px] font-bold uppercase text-[#ff9d95]">Remove</button>}</div><p className="mt-1 text-[9px] text-[#7880a0]">{marking.createdBy} · {new Date(marking.createdAt).toLocaleString()}</p></div>)}</div>
+          </section>
+          <section className="rounded border border-[#3a7bd5]/60 bg-[#1c2030] p-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#72a7f0]">Disclosure register</h4>
+            <p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">A dossier is created from the EXPORT control after integrity verification and is recorded here with its recipient purpose and manifest fingerprint.</p>
+            <div className="mt-3 space-y-2">{disclosureRecords.length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No forensic dossiers have been recorded for this operation.</p> : disclosureRecords.map((record) => <div key={record.id} className="rounded border border-[#454d66] bg-[#0c0e14] p-2"><div className="flex justify-between gap-3"><p className="text-[10px] font-bold text-[#dde1ec]">{record.recipientDescription}</p><span className={`text-[9px] font-bold uppercase ${record.status === 'shared' ? 'text-[#55c987]' : 'text-[#f7c86b]'}`}>{record.status}</span></div><p className="mt-1 text-[10px] text-[#9aa3bb]">{record.purpose}</p><p className="mt-1 break-all font-mono text-[9px] text-[#7880a0]">Manifest: {record.manifestDigest}</p><p className="mt-1 text-[9px] text-[#7880a0]">{record.disclosedBy} · {new Date(record.disclosedAt).toLocaleString()}{record.authorizationReference ? ` · ${record.authorizationReference}` : ''}</p></div>)}</div>
+          </section>
+          {dossierMessage && <p role="status" className="text-[10px] font-bold text-[#d8c8ff]">{dossierMessage}</p>}
+        </div>
+      </BottomSheet>
 
       <BottomSheet isOpen={(!!selectedNodeId || !!selectedEdgeId) && !connectingFromId} onClose={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setIsEditingNode(false); }} title={selectedNode ? (isEditingNode ? 'Edit Node' : selectedNode.data.label) : 'Relationship Details'}>
         

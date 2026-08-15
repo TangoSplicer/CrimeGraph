@@ -9,6 +9,7 @@ import {
   EVIDENCE_VERIFICATION_STATUSES,
   type EvidenceProvenanceInput,
 } from '../utils/evidenceProvenance';
+import { EVIDENCE_INTAKE_TEMPLATES, findEvidenceIntakeTemplate } from '../utils/evidenceIntakeTemplates';
 
 const nodeTypes = [
   { id: 'person', label: 'Person', icon: '👤', color: 'bg-[#3a7bd5]' },
@@ -60,11 +61,27 @@ export const AddNodeScreen: React.FC = () => {
   });
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureMessage, setCaptureMessage] = useState('');
+  const [evidenceTemplateId, setEvidenceTemplateId] = useState('');
+  const selectedEvidenceTemplate = findEvidenceIntakeTemplate(evidenceTemplateId);
 
   useEffect(() => {
     const templateKeys = metadataTemplates[selectedType] || [];
     setAttributes(templateKeys.map(key => ({ key, value: '' })));
   }, [selectedType]);
+
+  const handleSelectEvidenceTemplate = (templateId: string) => {
+    setEvidenceTemplateId(templateId);
+    const template = findEvidenceIntakeTemplate(templateId);
+    if (!template) return;
+    setEvidence((current) => ({ ...current, sourceType: template.sourceType }));
+    setAttributes((current) => {
+      const existing = new Map(current.map((attribute) => [attribute.key, attribute.value]));
+      const guidedFields = [...metadataTemplates.evidence, ...template.metadataFields];
+      const guided = guidedFields.map((key) => ({ key, value: existing.get(key) || '' }));
+      const additional = current.filter((attribute) => attribute.key && !guidedFields.includes(attribute.key));
+      return [...guided, ...additional];
+    });
+  };
 
   const handleAddAttribute = () => setAttributes([...attributes, { key: '', value: '' }]);
   const handleUpdateAttribute = (index: number, field: 'key'|'value', val: string) => {
@@ -156,8 +173,15 @@ export const AddNodeScreen: React.FC = () => {
           <section className="border border-[#1a8a4a]/70 bg-[#1a8a4a]/10 rounded-lg p-4 space-y-3">
             <div>
               <h2 className="text-xs font-bold text-[#55c987] uppercase tracking-widest">Evidence Provenance</h2>
-              <p className="text-[10px] text-[#9aa3bb] mt-1">Required fields establish the acquisition and handling record for this evidence item.</p>
+              <p className="text-[10px] text-[#9aa3bb] mt-1">Required fields establish the acquisition and handling record for this evidence item. Templates add prompts only; they never assert source, verification, or legal conclusions.</p>
             </div>
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-[#9aa3bb]">Evidence intake template <span className="normal-case font-normal">(optional guidance)</span>
+              <select value={evidenceTemplateId} onChange={(event) => handleSelectEvidenceTemplate(event.target.value)} className="mt-1 w-full bg-[#14171f] border border-[#1a8a4a]/60 rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#55c987]">
+                <option value="">Choose a common evidence class</option>
+                {EVIDENCE_INTAKE_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}
+              </select>
+            </label>
+            {selectedEvidenceTemplate && <div className="rounded border border-[#1a8a4a]/50 bg-[#0c0e14]/70 p-3"><p className="text-xs leading-relaxed text-[#dde1ec]">{selectedEvidenceTemplate.summary}</p><ul className="mt-2 space-y-1 text-[10px] leading-relaxed text-[#9aa3bb]">{selectedEvidenceTemplate.provenancePrompts.map((prompt) => <li key={prompt}>• {prompt}</li>)}</ul><p className="mt-2 text-[10px] leading-relaxed text-[#55c987]">{selectedEvidenceTemplate.captureGuidance}</p></div>}
             <div className="grid grid-cols-2 gap-3">
               <input type="text" value={evidence.exhibitNumber} onChange={e => setEvidence({ ...evidence, exhibitNumber: e.target.value })} placeholder="Exhibit / Reference *" className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a]" required />
               <select value={evidence.sourceType} onChange={e => setEvidence({ ...evidence, sourceType: e.target.value as typeof evidence.sourceType })} className="bg-[#14171f] border border-[#252a3a] rounded p-3 text-xs text-[#dde1ec] focus:outline-none focus:border-[#1a8a4a] capitalize">

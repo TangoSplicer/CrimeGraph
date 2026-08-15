@@ -5,7 +5,8 @@ import {
   normaliseEvidenceProvenance,
   validateEvidenceProvenance,
 } from './evidenceProvenance';
-import { buildGraphInsights } from './graphInsights';
+import { buildGraphInsights, searchCaseContent } from './graphInsights';
+import { EVIDENCE_INTAKE_TEMPLATES, findEvidenceIntakeTemplate } from './evidenceIntakeTemplates';
 import type { GraphElement, IntelNote } from '../stores/caseStore';
 
 beforeAll(() => {
@@ -21,11 +22,15 @@ describe('permission policy', () => {
     expect(can('readonly', 'case:export')).toBe(false);
   });
 
-  it('allows field capture while keeping case creation and package imports accountable', () => {
+  it('allows field capture while keeping case creation, import, and markings accountable', () => {
     expect(can('field', 'intelligence:create')).toBe(true);
     expect(can('field', 'intelligence:resubmit')).toBe(true);
     expect(can('field', 'case:create')).toBe(false);
     expect(can('field', 'case:import')).toBe(false);
+    expect(can('analyst', 'case:mark')).toBe(true);
+    expect(can('field', 'case:mark')).toBe(false);
+    expect(can('field', 'field:task:complete')).toBe(true);
+    expect(can('analyst', 'field:task:complete')).toBe(false);
   });
 });
 
@@ -60,6 +65,18 @@ describe('evidence provenance', () => {
   });
 });
 
+describe('evidence intake templates', () => {
+  it('offers common evidence classes as guidance without changing the verification decision', () => {
+    expect(EVIDENCE_INTAKE_TEMPLATES).toHaveLength(8);
+    const device = findEvidenceIntakeTemplate('device');
+    const witness = findEvidenceIntakeTemplate('witness_material');
+    expect(device).toMatchObject({ sourceType: 'physical', label: 'Device' });
+    expect(witness).toMatchObject({ sourceType: 'witness', label: 'Witness material' });
+    expect(EVIDENCE_INTAKE_TEMPLATES.every((template) => template.captureGuidance.length > 0 && template.provenancePrompts.length > 0)).toBe(true);
+    expect(findEvidenceIntakeTemplate('unknown')).toBeUndefined();
+  });
+});
+
 describe('case structure analysis', () => {
   it('reports documentation and evidence review gaps without ranking people', () => {
     const elements: GraphElement[] = [
@@ -78,5 +95,20 @@ describe('case structure analysis', () => {
     expect(insights.evidenceRequiringReview).toBe(1);
     expect(insights.itemsWithoutObservedTime).toBe(1);
     expect(insights.notesWithoutLinks).toBe(1);
+    expect(insights.qualityFindings.map((finding) => finding.kind)).toEqual(expect.arrayContaining(['missing_observed_time', 'unlinked_note', 'pending_review']));
+  });
+
+  it('returns local records by searchable evidence, relationship, and note fields', () => {
+    const elements: GraphElement[] = [
+      { data: { id: 'phone-1', label: 'Primary handset', type: 'phone', confidence: 3, attributes: { identifier: '07700900123' } } },
+      { data: { id: 'phone-2', label: 'primary handset', type: 'phone', confidence: 3, attributes: {} } },
+      { data: { id: 'edge-1', source: 'phone-1', target: 'phone-2', label: 'CONTACTED' } },
+    ];
+    const notes: IntelNote[] = [{ id: 'note-1', case_id: 'case-1', content: 'Handset was retained for review.', linked_nodes: ['phone-1'], created_at: '2026-08-13T12:00:00.000Z' }];
+
+    expect(searchCaseContent(elements, notes, '900123')).toMatchObject([{ kind: 'node', id: 'phone-1' }]);
+    expect(searchCaseContent(elements, notes, 'retained')).toMatchObject([{ kind: 'note', id: 'note-1' }]);
+    expect(searchCaseContent(elements, notes, 'contacted')).toMatchObject([{ kind: 'relationship', id: 'edge-1' }]);
+    expect(buildGraphInsights(elements, notes).qualityFindings.map((finding) => finding.kind)).toContain('duplicate_candidate');
   });
 });

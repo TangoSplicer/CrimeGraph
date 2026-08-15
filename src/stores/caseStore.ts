@@ -5,6 +5,8 @@ import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
 import { decryptPackage, encryptPackage } from '../capacitor/crypto';
+import { getDeviceIdentity, signWithDeviceIdentity, verifyDeviceSignature } from '../capacitor/deviceIdentity';
+import { buildForensicDossier, verifyForensicDossier, type DossierDisclosure, type DossierRedactionProfile } from '../utils/forensicDossier';
 import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
@@ -20,6 +22,11 @@ import {
 export interface Case { id: string; reference_number: string; title: string; case_type: string; status: string; classification: string; date_opened: string; assignment_id?: string | null; assignment_note?: string | null; assigned_at?: string | null; assigned_by?: string | null; }
 export interface AssignableFieldOperator { id: string; badge: string; name: string; lastLogin: string | null; }
 export interface CaseAssignment { id: string; caseId: string; operatorId: string; operatorBadge: string; operatorName: string; status: 'active' | 'removed'; note: string; assignedBy: string; assignedAt: string; removedBy: string | null; removedAt: string | null; removalReason: string | null; }
+export type MarkingObjectType = 'case' | 'node' | 'note' | 'evidence';
+export interface DataMarking { id: string; caseId: string; objectType: MarkingObjectType; objectId: string; marking: string; handlingInstructions: string; createdBy: string; createdAt: string; }
+export interface DisclosureRecord { id: string; dossierId: string; caseId: string; purpose: string; recipientDescription: string; authorizationReference: string | null; disclosedBy: string; disclosedAt: string; status: 'prepared' | 'shared' | 'cancelled'; manifestDigest: string; verificationStatus: string; }
+export type FieldTaskStatus = 'assigned' | 'complete' | 'unable';
+export interface FieldTask { id: string; caseId: string; assigneeId: string; assigneeBadge: string; assigneeName: string; title: string; objective: string; checklist: string[]; contextNote: string; dueAt: string | null; status: FieldTaskStatus; createdBy: string; createdAt: string; completedBy: string | null; completedAt: string | null; completionNote: string; inabilityReason: string; }
 export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
 
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; review_status?: ReviewStatus; submitted_by?: string | null; submitted_at?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; review_notes?: string | null; }; }
@@ -36,6 +43,9 @@ interface CaseState {
   reviewQueue: ReviewQueueItem[];
   caseAssignments: CaseAssignment[];
   assignableFieldOperators: AssignableFieldOperator[];
+  dataMarkings: DataMarking[];
+  disclosureRecords: DisclosureRecord[];
+  fieldTasks: FieldTask[];
   notes: IntelNote[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -50,6 +60,13 @@ interface CaseState {
   loadAssignableFieldOperators: () => Promise<void>;
   assignFieldOperator: (caseId: string, operatorId: string, note: string) => Promise<void>;
   removeFieldAssignment: (assignmentId: string, reason: string) => Promise<void>;
+  loadDataMarkings: (caseId: string) => Promise<void>;
+  addDataMarking: (objectType: MarkingObjectType, objectId: string, marking: string, handlingInstructions?: string) => Promise<void>;
+  removeDataMarking: (markingId: string) => Promise<void>;
+  loadDisclosureRecords: (caseId: string) => Promise<void>;
+  loadFieldTasks: (caseId: string) => Promise<void>;
+  createFieldTask: (caseId: string, assigneeId: string, title: string, objective: string, checklist: string[], contextNote?: string, dueAt?: string) => Promise<void>;
+  completeFieldTask: (taskId: string, status: Extract<FieldTaskStatus, 'complete' | 'unable'>, note: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput, occurredAt?: string) => Promise<void>;
   updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>, occurredAt?: string) => Promise<void>;
@@ -94,11 +111,6 @@ const ensureCaseAccess = async (caseId: string): Promise<void> => {
   const db = await getDb();
   const assignment = await db.query("SELECT id FROM case_assignments WHERE case_id = ? AND operator_id = ? AND status = 'active' LIMIT 1", [caseId, user.id]);
   if (!assignment.values?.length) throw new Error('This operation is not assigned to the current field operator.');
-};
-
-const logAudit = async (action: string, targetId: string, details: string) => {
-  const db = await getDb();
-  return appendAuditEntry(db, action, targetId, details, currentOperator());
 };
 
 const ensureNotesTable = async () => {
@@ -201,6 +213,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   reviewQueue: [],
   caseAssignments: [],
   assignableFieldOperators: [],
+  dataMarkings: [],
+  disclosureRecords: [],
+  fieldTasks: [],
   notes: [],
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -353,6 +368,136 @@ export const useCaseStore = create<CaseState>((set, get) => ({
       await appendAuditEntry(db, 'REMOVE_FIELD_ASSIGNMENT', assignment.case_id, `Removed ${assignment.operator_badge} from ${assignment.reference_number}: ${cleanReason}`, currentOperator());
     });
     await get().loadCaseAssignments(assignment.case_id);
+  },
+
+  loadDataMarkings: async (caseId) => {
+    assertCurrentPermission('case:mark');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM data_markings WHERE case_id = ? ORDER BY object_type, object_id, marking', [caseId]);
+    set({ dataMarkings: (response.values || []).map((record: any): DataMarking => ({
+      id: String(record.id), caseId: String(record.case_id), objectType: record.object_type as MarkingObjectType,
+      objectId: String(record.object_id), marking: String(record.marking), handlingInstructions: String(record.handling_instructions || ''),
+      createdBy: String(record.created_by), createdAt: String(record.created_at),
+    })) });
+  },
+
+  addDataMarking: async (objectType, objectId, marking, handlingInstructions = '') => {
+    assertCurrentPermission('case:mark');
+    const activeCaseId = get().activeCaseId;
+    if (!activeCaseId) throw new Error('Select an operation before applying a marking.');
+    const cleanMarking = marking.trim().toUpperCase();
+    const cleanInstructions = handlingInstructions.trim().slice(0, 500);
+    if (!/^[A-Z0-9_-]{3,64}$/.test(cleanMarking)) throw new Error('Marking must contain 3–64 letters, numbers, underscores, or hyphens.');
+    if (!['case', 'node', 'note', 'evidence'].includes(objectType)) throw new Error('Unsupported marking target.');
+    if (!objectId.trim()) throw new Error('Marking target is required.');
+    const db = await getDb();
+    const now = new Date().toISOString();
+    const id = createId('marking');
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO data_markings (id, case_id, object_type, object_id, marking, handling_instructions, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, activeCaseId, objectType, objectId.trim(), cleanMarking, cleanInstructions || null, currentOperator(), now, now]);
+      await appendAuditEntry(db, 'APPLY_DATA_MARKING', id, `Applied ${cleanMarking} marking to ${objectType} ${objectId.trim()}`, currentOperator());
+    });
+    await get().loadDataMarkings(activeCaseId);
+  },
+
+  removeDataMarking: async (markingId) => {
+    assertCurrentPermission('case:mark');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM data_markings WHERE id = ? LIMIT 1', [markingId]);
+    const marking = response.values?.[0];
+    if (!marking) throw new Error('Data marking was not found.');
+    await withTransaction(db, async () => {
+      await db.run('DELETE FROM data_markings WHERE id = ?', [markingId]);
+      await appendAuditEntry(db, 'REMOVE_DATA_MARKING', markingId, `Removed ${marking.marking} marking from ${marking.object_type} ${marking.object_id}`, currentOperator());
+    });
+    await get().loadDataMarkings(String(marking.case_id));
+  },
+
+  loadDisclosureRecords: async (caseId) => {
+    assertCurrentPermission('case:export');
+    const db = await getDb();
+    const response = await db.query(
+      `SELECT dr.*, fd.manifest_digest, fd.verification_status
+       FROM disclosure_register dr
+       INNER JOIN forensic_dossiers fd ON fd.id = dr.dossier_id
+       WHERE dr.case_id = ?
+       ORDER BY dr.disclosed_at DESC`,
+      [caseId],
+    );
+    set({ disclosureRecords: (response.values || []).map((record: any): DisclosureRecord => ({
+      id: String(record.id), dossierId: String(record.dossier_id), caseId: String(record.case_id), purpose: String(record.purpose),
+      recipientDescription: String(record.recipient_description), authorizationReference: record.authorization_reference ? String(record.authorization_reference) : null,
+      disclosedBy: String(record.disclosed_by), disclosedAt: String(record.disclosed_at), status: record.status === 'cancelled' ? 'cancelled' : record.status === 'shared' ? 'shared' : 'prepared',
+      manifestDigest: String(record.manifest_digest), verificationStatus: String(record.verification_status),
+    })) });
+  },
+
+  loadFieldTasks: async (caseId) => {
+    const user = useAuthStore.getState().currentUser;
+    if (!user) throw new Error('Sign in before loading field tasks.');
+    await ensureCaseAccess(caseId);
+    const db = await getDb();
+    const response = user.role === 'field'
+      ? await db.query(
+        `SELECT ft.*, u.badge AS assignee_badge, u.name AS assignee_name FROM field_tasks ft
+         INNER JOIN users u ON u.id = ft.assignee_id
+         WHERE ft.case_id = ? AND ft.assignee_id = ? ORDER BY CASE ft.status WHEN 'assigned' THEN 0 ELSE 1 END, COALESCE(ft.due_at, ft.created_at), ft.created_at DESC`,
+        [caseId, user.id],
+      )
+      : await db.query(
+        `SELECT ft.*, u.badge AS assignee_badge, u.name AS assignee_name FROM field_tasks ft
+         INNER JOIN users u ON u.id = ft.assignee_id
+         WHERE ft.case_id = ? ORDER BY CASE ft.status WHEN 'assigned' THEN 0 ELSE 1 END, COALESCE(ft.due_at, ft.created_at), ft.created_at DESC`,
+        [caseId],
+      );
+    set({ fieldTasks: (response.values || []).map((record: any): FieldTask => ({
+      id: String(record.id), caseId: String(record.case_id), assigneeId: String(record.assignee_id), assigneeBadge: String(record.assignee_badge), assigneeName: String(record.assignee_name),
+      title: String(record.title), objective: String(record.objective), checklist: Array.isArray(record.checklist) ? record.checklist.map(String) : (() => { try { const parsed = JSON.parse(String(record.checklist || '[]')); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return []; } })(),
+      contextNote: String(record.context_note || ''), dueAt: record.due_at ? String(record.due_at) : null, status: record.status === 'complete' ? 'complete' : record.status === 'unable' ? 'unable' : 'assigned',
+      createdBy: String(record.created_by), createdAt: String(record.created_at), completedBy: record.completed_by ? String(record.completed_by) : null, completedAt: record.completed_at ? String(record.completed_at) : null,
+      completionNote: String(record.completion_note || ''), inabilityReason: String(record.inability_reason || ''),
+    })) });
+  },
+
+  createFieldTask: async (caseId, assigneeId, title, objective, checklist, contextNote = '', dueAt = '') => {
+    assertCurrentPermission('case:assign');
+    const cleanTitle = title.trim().slice(0, 160);
+    const cleanObjective = objective.trim().slice(0, 1000);
+    const cleanChecklist = [...new Set(checklist.map((item) => item.trim().slice(0, 300)).filter(Boolean))].slice(0, 20);
+    const cleanContext = contextNote.trim().slice(0, 1000);
+    const cleanDueAt = dueAt ? normaliseOccurredAt(dueAt) : null;
+    if (cleanTitle.length < 3) throw new Error('Task title must contain at least three characters.');
+    if (cleanObjective.length < 5) throw new Error('Task objective must contain at least five characters.');
+    const db = await getDb();
+    const assignment = await db.query("SELECT id FROM case_assignments WHERE case_id = ? AND operator_id = ? AND status = 'active' LIMIT 1", [caseId, assigneeId]);
+    if (!assignment.values?.length) throw new Error('A field task can only be assigned to an active field-case assignment.');
+    const now = new Date().toISOString();
+    const taskId = createId('task');
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO field_tasks (id, case_id, assignee_id, title, objective, checklist, context_note, due_at, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [taskId, caseId, assigneeId, cleanTitle, cleanObjective, JSON.stringify(cleanChecklist), cleanContext || null, cleanDueAt, 'assigned', currentOperator(), now, now]);
+      await appendAuditEntry(db, 'CREATE_FIELD_TASK', taskId, `Assigned field task “${cleanTitle}” to ${assigneeId}`, currentOperator());
+    });
+    await get().loadFieldTasks(caseId);
+  },
+
+  completeFieldTask: async (taskId, status, note) => {
+    assertCurrentPermission('field:task:complete');
+    const user = useAuthStore.getState().currentUser;
+    if (!user) throw new Error('Sign in before completing a field task.');
+    const cleanNote = note.trim().slice(0, 1000);
+    if (status === 'unable' && cleanNote.length < 5) throw new Error('State why the task could not be completed.');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM field_tasks WHERE id = ? LIMIT 1', [taskId]);
+    const task = response.values?.[0];
+    if (!task) throw new Error('Field task was not found.');
+    if (task.status !== 'assigned') throw new Error('Only an assigned task can be completed or returned.');
+    if (user.role === 'field' && String(task.assignee_id) !== user.id) throw new Error('Field operators can complete only their own assigned tasks.');
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run('UPDATE field_tasks SET status = ?, completed_by = ?, completed_at = ?, completion_note = ?, inability_reason = ?, updated_at = ? WHERE id = ?', [status, user.badge, now, status === 'complete' ? cleanNote || null : null, status === 'unable' ? cleanNote : null, now, taskId]);
+      await appendAuditEntry(db, status === 'complete' ? 'COMPLETE_FIELD_TASK' : 'RETURN_FIELD_TASK', taskId, `${status === 'complete' ? 'Completed' : 'Returned'} field task ${task.title}`, user.badge);
+    });
+    await get().loadFieldTasks(String(task.case_id));
   },
 
   loadGraphElements: async (caseId) => {
@@ -565,31 +710,77 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     if (!activeCaseId) return;
     const activeCase = cases.find((entry) => entry.id === activeCaseId);
     if (!activeCase) return;
-    const password = window.prompt('SECURE EXPORT: Enter a new password of at least 12 characters:');
+    const password = window.prompt('FORENSIC DOSSIER: Enter a new password of at least 12 characters:');
     if (!password) return;
     if (password.length < 12) throw new Error('Export password must contain at least 12 characters.');
+    const purpose = window.prompt('DISCLOSURE PURPOSE: State the authorized purpose for this dossier:');
+    if (!purpose) return;
+    const recipientDescription = window.prompt('RECIPIENT: Describe the authorized recipient or destination:');
+    if (!recipientDescription) return;
+    const authorizationReference = window.prompt('AUTHORIZATION REFERENCE: Optional approval, warrant, or disclosure reference:') || undefined;
+    const redactionChoice = window.prompt('REDACTION PROFILE: Enter comma-separated values from notes, attachment_paths, observer_identity, observed_time; leave blank for none:') || '';
+    const omitted = redactionChoice.split(',').map((value) => value.trim()).filter(Boolean) as DossierRedactionProfile['omitted'];
+    const rationale = omitted.length > 0 ? window.prompt('REDACTION RATIONALE: Explain why these fields are omitted:') || '' : '';
+    if (activeCase.classification !== 'OFFICIAL') await requireHighRiskReauthentication('Confirm restricted forensic dossier export');
 
-    const exportData = {
-      metadata: {
-        package_version: 3,
-        reference: activeCase.reference_number,
-        title: activeCase.title,
-        classification: activeCase.classification,
-        exported_at: new Date().toISOString(),
-        system: 'CrimeGraph',
+    const db = await getDb();
+    const auditResponse = await db.query('SELECT * FROM audit_logs ORDER BY timestamp ASC, id ASC');
+    const auditEntries = auditResponse.values || [];
+    const auditVerification = await verifyAuditChain(auditEntries);
+    if (!auditVerification.valid) throw new Error('The audit ledger must verify before a forensic dossier can be exported.');
+    const auditHeadHash = auditEntries.length ? String(auditEntries[auditEntries.length - 1].entry_hash || '') || null : null;
+    const markingsResponse = await db.query('SELECT object_type, object_id, marking, handling_instructions, created_by, created_at FROM data_markings WHERE case_id = ? ORDER BY object_type, object_id, marking', [activeCaseId]);
+    const now = new Date().toISOString();
+    const dossierId = createId('dossier');
+    const identity = await getDeviceIdentity();
+    const disclosure: DossierDisclosure = { purpose, recipientDescription, authorizationReference };
+    const dossier = await buildForensicDossier({
+      dossierId,
+      caseId: activeCaseId,
+      reference: activeCase.reference_number,
+      title: activeCase.title,
+      classification: activeCase.classification,
+      exportedAt: now,
+      exportedBy: currentOperator(),
+      redactionProfile: { omitted, rationale },
+      disclosure,
+      audit: { chainValid: auditVerification.valid, verifiedEntries: auditVerification.verifiedEntries, auditHeadHash },
+      signer: { fingerprint: identity.fingerprint, publicKey: identity.publicKey, sign: signWithDeviceIdentity },
+      content: {
+        case: { id: activeCase.id, reference_number: activeCase.reference_number, title: activeCase.title, case_type: activeCase.case_type, status: activeCase.status, classification: activeCase.classification, date_opened: activeCase.date_opened },
+        nodes: graphElements.filter((element) => !element.data.source),
+        relationships: graphElements.filter((element) => Boolean(element.data.source)),
+        notes,
+        markings: markingsResponse.values || [],
       },
-      intelligence_nodes: graphElements.filter((element) => !element.data.source),
-      relationships: graphElements.filter((element) => Boolean(element.data.source)),
-      notes,
-    };
-    const encryptedPayload = await encryptPackage(JSON.stringify(exportData), password);
-    const fileName = `intel_pkg_${activeCase.reference_number.replace(/[^A-Za-z0-9_-]/g, '_')}.enc`;
+    });
+    const dossierVerification = await verifyForensicDossier(dossier);
+    const signatureValid = dossierVerification.valid && await verifyDeviceSignature(identity.publicKey, dossier.manifest.integrity.manifest, dossier.manifest.signer.signature);
+    if (!signatureValid) throw new Error('The forensic dossier could not be integrity-verified with this device identity.');
+
+    await withTransaction(db, async () => {
+      await db.run(
+        'INSERT INTO forensic_dossiers (id, case_id, manifest_digest, signature, signer_fingerprint, audit_chain_valid, audit_head_hash, classification, redaction_profile, exported_by, exported_at, purpose, recipient_description, authorization_reference, verification_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [dossierId, activeCaseId, dossier.manifest.integrity.manifest, dossier.manifest.signer.signature, identity.fingerprint, 1, auditHeadHash, activeCase.classification, JSON.stringify(dossier.manifest.redaction_profile), currentOperator(), now, dossier.manifest.disclosure.purpose, dossier.manifest.disclosure.recipientDescription, dossier.manifest.disclosure.authorizationReference || null, 'verified'],
+      );
+      await db.run(
+        'INSERT INTO disclosure_register (id, dossier_id, case_id, purpose, recipient_description, authorization_reference, disclosed_by, disclosed_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [createId('disclosure'), dossierId, activeCaseId, dossier.manifest.disclosure.purpose, dossier.manifest.disclosure.recipientDescription, dossier.manifest.disclosure.authorizationReference || null, currentOperator(), now, 'prepared'],
+      );
+      await appendAuditEntry(db, 'CREATE_FORENSIC_DOSSIER', dossierId, `Created verified dossier for ${activeCase.reference_number}; recipient: ${dossier.manifest.disclosure.recipientDescription}`, currentOperator());
+    });
+
+    const encryptedPayload = await encryptPackage(JSON.stringify(dossier), password);
+    const fileName = `forensic_dossier_${activeCase.reference_number.replace(/[^A-Za-z0-9_-]/g, '_')}_${dossierId.slice(-8)}.enc`;
     const fileResult = await Filesystem.writeFile({ path: fileName, data: encryptedPayload, directory: Directory.Cache, encoding: Encoding.UTF8 });
-    await logAudit('EXPORT_PACKAGE', activeCaseId, `Exported encrypted package for ${activeCase.reference_number}`);
     useAuthStore.getState().setIntentionalBackground(true);
     const canShare = await Share.canShare();
-    if (!canShare.value) throw new Error('The device cannot share this encrypted package.');
-    await Share.share({ title: `Encrypted package: ${activeCase.reference_number}`, text: 'Encrypted CrimeGraph intelligence package', url: fileResult.uri, dialogTitle: 'Export package' });
+    if (!canShare.value) throw new Error('The device cannot share this encrypted forensic dossier.');
+    await Share.share({ title: `Forensic dossier: ${activeCase.reference_number}`, text: 'Encrypted CrimeGraph forensic dossier', url: fileResult.uri, dialogTitle: 'Share forensic dossier' });
+    await withTransaction(db, async () => {
+      await db.run("UPDATE disclosure_register SET status = 'shared' WHERE dossier_id = ?", [dossierId]);
+      await appendAuditEntry(db, 'SHARE_FORENSIC_DOSSIER', dossierId, `Issued share intent for dossier ${dossier.manifest.integrity.manifest}`, currentOperator());
+    });
   },
 
   importCase: async (encryptedData) => {
@@ -597,7 +788,29 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     if (!encryptedData || encryptedData.length > MAX_IMPORT_BASE64_LENGTH) throw new Error('Import package is empty or exceeds the supported size.');
     const password = window.prompt('SECURE IMPORT: Enter the package password:');
     if (!password) return;
-    const parsed = validateImportedPackage(JSON.parse(await decryptPackage(encryptedData, password)));
+    const decoded = JSON.parse(await decryptPackage(encryptedData, password));
+    const dossierVerification = await verifyForensicDossier(decoded);
+    const manifestDigest = dossierVerification.manifestDigest;
+    const isForensicDossier = manifestDigest !== null;
+    if (isForensicDossier) {
+      const manifest = decoded?.manifest;
+      const publicKey = manifest?.signer?.public_key;
+      const signature = manifest?.signer?.signature;
+      if (!dossierVerification.valid || typeof publicKey !== 'string' || typeof signature !== 'string' || !await verifyDeviceSignature(publicKey, manifestDigest, signature)) {
+        throw new Error(`Forensic dossier verification failed: ${dossierVerification.errors.join(' ') || 'device signature is invalid.'}`);
+      }
+    }
+    const packageCandidate = isForensicDossier ? {
+      metadata: {
+        reference: decoded.manifest.reference,
+        title: decoded.manifest.title,
+        classification: decoded.manifest.classification,
+      },
+      intelligence_nodes: decoded.content.nodes,
+      relationships: decoded.content.relationships,
+      notes: decoded.content.notes,
+    } : decoded;
+    const parsed = validateImportedPackage(packageCandidate);
     const db = await getDb();
     const newCaseId = createId('case');
     const now = new Date().toISOString();
@@ -662,7 +875,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           [createId('note'), newCaseId, content, JSON.stringify(linkedNodeIds), typeof candidate.created_at === 'string' ? candidate.created_at.slice(0, 40) : now],
         );
       }
-      await appendAuditEntry(db, 'IMPORT_CASE', newCaseId, `Imported encrypted package ${parsed.reference}`, currentOperator());
+      await appendAuditEntry(db, isForensicDossier ? 'IMPORT_VERIFIED_DOSSIER' : 'IMPORT_CASE', newCaseId, isForensicDossier ? `Imported verified forensic dossier ${parsed.reference} signed by ${dossierVerification.signerFingerprint}` : `Imported encrypted package ${parsed.reference}`, currentOperator());
     });
     await get().loadCases();
   },

@@ -7,6 +7,25 @@ export interface ConnectedEntity {
   connections: number;
 }
 
+export type QualityFindingKind = 'missing_observed_time' | 'missing_custody' | 'unlinked_note' | 'isolated_entity' | 'duplicate_candidate' | 'pending_review';
+export type QualityFindingSeverity = 'review' | 'attention';
+
+export interface QualityFinding {
+  id: string;
+  kind: QualityFindingKind;
+  severity: QualityFindingSeverity;
+  title: string;
+  explanation: string;
+  affectedIds: string[];
+}
+
+export interface CaseSearchResult {
+  id: string;
+  kind: 'node' | 'note' | 'relationship';
+  title: string;
+  summary: string;
+}
+
 export interface GraphInsights {
   entityCount: number;
   relationshipCount: number;
@@ -18,6 +37,48 @@ export interface GraphInsights {
   evidenceWithoutCustody: number;
   itemsWithoutObservedTime: number;
   mostConnected: ConnectedEntity[];
+  qualityFindings: QualityFinding[];
+}
+
+const normaliseSearch = (value: unknown): string => String(value ?? '').trim().toLocaleLowerCase();
+
+const nodeSearchText = (node: GraphElement): string => {
+  const data = node.data;
+  return [
+    data.label,
+    data.type,
+    data.occurred_at,
+    ...Object.entries(data.attributes || {}).flatMap(([key, value]) => [key, value]),
+    data.evidence?.exhibitNumber,
+    data.evidence?.sourceReference,
+    data.evidence?.sourceType,
+    data.evidence?.handlingStatus,
+    data.evidence?.verificationStatus,
+    data.evidence?.attachmentName,
+  ].map(normaliseSearch).join(' ');
+};
+
+export function searchCaseContent(elements: GraphElement[], notes: IntelNote[], query: string): CaseSearchResult[] {
+  const needle = normaliseSearch(query);
+  if (needle.length < 2) return [];
+  const nodes = elements.filter((element) => !element.data.source && !element.data.target);
+  const edges = elements.filter((element) => Boolean(element.data.source && element.data.target));
+  const nodeById = new Map(nodes.map((node) => [node.data.id, node]));
+  const results: CaseSearchResult[] = [];
+
+  nodes.forEach((node) => {
+    if (nodeSearchText(node).includes(needle)) results.push({ id: node.data.id, kind: 'node', title: node.data.label, summary: `${node.data.type || 'entity'} · ${node.data.occurred_at ? new Date(node.data.occurred_at).toLocaleString() : 'no observed time'}` });
+  });
+  notes.forEach((note) => {
+    if (normaliseSearch(note.content).includes(needle)) results.push({ id: note.id, kind: 'note', title: 'Intelligence note', summary: note.content.slice(0, 180) });
+  });
+  edges.forEach((edge) => {
+    const source = edge.data.source ? nodeById.get(edge.data.source)?.data.label || edge.data.source : 'Unknown';
+    const target = edge.data.target ? nodeById.get(edge.data.target)?.data.label || edge.data.target : 'Unknown';
+    const searchable = normaliseSearch(`${edge.data.label} ${source} ${target}`);
+    if (searchable.includes(needle)) results.push({ id: edge.data.id, kind: 'relationship', title: edge.data.label || 'Relationship', summary: `${source} → ${target}` });
+  });
+  return results.sort((left, right) => left.kind.localeCompare(right.kind) || left.title.localeCompare(right.title));
 }
 
 export function buildGraphInsights(elements: GraphElement[], notes: IntelNote[]): GraphInsights {
@@ -43,17 +104,45 @@ export function buildGraphInsights(elements: GraphElement[], notes: IntelNote[])
   const evidenceNodes = nodes.filter((node) => node.data.type === 'evidence');
   const evidenceRequiringReview = nodes.filter((node) => node.data.review_status === 'pending').length;
   const evidenceWithoutCustody = evidenceNodes.filter((node) => !node.data.evidence?.chainOfCustody).length;
+  const missingObservedTime = nodes.filter((node) => !node.data.occurred_at && !node.data.evidence?.acquiredAt);
+  const isolatedEntities = rankedEntities.filter((entity) => entity.connections === 0);
+  const notesWithoutLinks = notes.filter((note) => note.linked_nodes.length === 0);
+  const duplicateGroups = new Map<string, GraphElement[]>();
+  nodes.forEach((node) => {
+    const key = normaliseSearch(node.data.label).replace(/\s+/g, ' ');
+    if (!key) return;
+    duplicateGroups.set(key, [...(duplicateGroups.get(key) || []), node]);
+  });
+
+  const qualityFindings: QualityFinding[] = [];
+  if (missingObservedTime.length) qualityFindings.push({
+    id: 'missing_observed_time', kind: 'missing_observed_time', severity: 'attention', title: 'Observed time is missing',
+    explanation: `${missingObservedTime.length} record${missingObservedTime.length === 1 ? '' : 's'} cannot be placed reliably on the chronology until an observed or acquired time is recorded.`,
+    affectedIds: missingObservedTime.map((node) => node.data.id),
+  });
+  if (evidenceWithoutCustody) {
+    const affected = evidenceNodes.filter((node) => !node.data.evidence?.chainOfCustody).map((node) => node.data.id);
+    qualityFindings.push({ id: 'missing_custody', kind: 'missing_custody', severity: 'attention', title: 'Evidence custody notes are missing', explanation: `${affected.length} evidence record${affected.length === 1 ? '' : 's'} has no chain-of-custody narrative.`, affectedIds: affected });
+  }
+  if (notesWithoutLinks.length) qualityFindings.push({ id: 'unlinked_note', kind: 'unlinked_note', severity: 'review', title: 'Intelligence notes are unlinked', explanation: `${notesWithoutLinks.length} note${notesWithoutLinks.length === 1 ? '' : 's'} is not linked to a graph entity, limiting traceability within the case graph.`, affectedIds: notesWithoutLinks.map((note) => note.id) });
+  if (isolatedEntities.length) qualityFindings.push({ id: 'isolated_entity', kind: 'isolated_entity', severity: 'review', title: 'Entities have no graph relationship', explanation: `${isolatedEntities.length} entity record${isolatedEntities.length === 1 ? '' : 's'} has no relationship edge. This is a structural cue, not a judgment about relevance.`, affectedIds: isolatedEntities.map((entity) => entity.id) });
+  [...duplicateGroups.values()].filter((group) => group.length > 1).forEach((group) => qualityFindings.push({ id: `duplicate_candidate:${group.map((node) => node.data.id).sort().join(':')}`, kind: 'duplicate_candidate', severity: 'review', title: 'Possible duplicate label', explanation: `${group.length} records share the normalized label “${group[0].data.label}”. Analyst confirmation is required before any merge or deletion.`, affectedIds: group.map((node) => node.data.id) }));
+  if (evidenceRequiringReview) {
+    const affected = nodes.filter((node) => node.data.review_status === 'pending').map((node) => node.data.id);
+    qualityFindings.push({ id: 'pending_review', kind: 'pending_review', severity: 'review', title: 'Supervisor review remains pending', explanation: `${affected.length} field submission${affected.length === 1 ? '' : 's'} awaits an explicit supervisor decision.`, affectedIds: affected });
+  }
 
   return {
     entityCount: nodes.length,
     relationshipCount: edges.length,
-    isolatedEntities: rankedEntities.filter((entity) => entity.connections === 0).length,
+    isolatedEntities: isolatedEntities.length,
     entitiesWithoutMetadata: nodes.filter((node) => Object.keys(node.data.attributes || {}).length === 0).length,
-    notesWithoutLinks: notes.filter((note) => note.linked_nodes.length === 0).length,
+    notesWithoutLinks: notesWithoutLinks.length,
     evidenceCount: evidenceNodes.length,
     evidenceRequiringReview,
     evidenceWithoutCustody,
-    itemsWithoutObservedTime: nodes.filter((node) => !node.data.occurred_at && !node.data.evidence?.acquiredAt).length,
+    itemsWithoutObservedTime: missingObservedTime.length,
     mostConnected: rankedEntities.filter((entity) => entity.connections > 0).slice(0, 3),
+    qualityFindings,
   };
 }

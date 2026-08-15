@@ -47,6 +47,74 @@ CREATE TABLE IF NOT EXISTS case_assignments (
   FOREIGN KEY(operator_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS data_markings (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  object_type TEXT NOT NULL CHECK(object_type IN ('case', 'node', 'note', 'evidence')),
+  object_id TEXT NOT NULL,
+  marking TEXT NOT NULL,
+  handling_instructions TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(case_id, object_type, object_id, marking),
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS forensic_dossiers (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL,
+  signature TEXT,
+  signer_fingerprint TEXT,
+  audit_chain_valid INTEGER NOT NULL,
+  audit_head_hash TEXT,
+  classification TEXT NOT NULL,
+  redaction_profile TEXT NOT NULL,
+  exported_by TEXT NOT NULL,
+  exported_at TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  recipient_description TEXT NOT NULL,
+  authorization_reference TEXT,
+  verification_status TEXT NOT NULL CHECK(verification_status IN ('verified', 'unsigned', 'failed')),
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS disclosure_register (
+  id TEXT PRIMARY KEY,
+  dossier_id TEXT NOT NULL UNIQUE,
+  case_id TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  recipient_description TEXT NOT NULL,
+  authorization_reference TEXT,
+  disclosed_by TEXT NOT NULL,
+  disclosed_at TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('prepared', 'shared', 'cancelled')),
+  FOREIGN KEY(dossier_id) REFERENCES forensic_dossiers(id),
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS field_tasks (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  assignee_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  objective TEXT NOT NULL,
+  checklist TEXT NOT NULL,
+  context_note TEXT,
+  due_at TEXT,
+  status TEXT NOT NULL CHECK(status IN ('assigned', 'complete', 'unable')),
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_by TEXT,
+  completed_at TEXT,
+  completion_note TEXT,
+  inability_reason TEXT,
+  FOREIGN KEY(case_id) REFERENCES cases(id),
+  FOREIGN KEY(assignee_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL,
@@ -136,6 +204,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_users_status_badge ON users(status, badge);
 CREATE INDEX IF NOT EXISTS idx_case_assignments_operator_status ON case_assignments(operator_id, status, assigned_at);
 CREATE INDEX IF NOT EXISTS idx_case_assignments_case_status ON case_assignments(case_id, status);
+CREATE INDEX IF NOT EXISTS idx_data_markings_case_object ON data_markings(case_id, object_type, object_id);
+CREATE INDEX IF NOT EXISTS idx_forensic_dossiers_case_exported ON forensic_dossiers(case_id, exported_at);
+CREATE INDEX IF NOT EXISTS idx_disclosure_register_case_disclosed ON disclosure_register(case_id, disclosed_at);
+CREATE INDEX IF NOT EXISTS idx_field_tasks_assignee_status ON field_tasks(assignee_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_field_tasks_case_status ON field_tasks(case_id, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);

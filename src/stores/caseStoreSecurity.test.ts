@@ -14,6 +14,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: { isNativePlatform: mocks.isNativePlatform },
+  registerPlugin: vi.fn(() => ({
+    getPublicIdentity: vi.fn(),
+    getStorageSecret: vi.fn(),
+    destroyStorageSecret: vi.fn(),
+    sign: vi.fn(),
+    verify: vi.fn(),
+  })),
 }));
 
 vi.mock('@capacitor/filesystem', () => ({
@@ -70,7 +77,7 @@ beforeEach(() => {
   mocks.appendAuditEntry.mockResolvedValue(undefined);
   useCaseStore.setState({
     cases: [], activeCaseId: null, graphElements: [], auditLogs: [], auditVerification: null,
-    reviewQueue: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
+    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
   });
 });
 
@@ -185,5 +192,59 @@ describe('case assignment and field work queue', () => {
 
     await expect(useCaseStore.getState().loadGraphElements('case-1')).rejects.toThrow('not assigned');
     expect(db.query).toHaveBeenCalledWith(expect.stringContaining('case_assignments'), ['case-1', 'field-001']);
+  });
+
+  it('creates a structured task only for an active local field assignment and audits the handoff', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ id: 'assignment-1' }] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().createFieldTask('case-1', 'field-001', 'Capture exterior', 'Record exterior observations and preserve source context.', ['Record arrival time', 'Record vantage point'], 'Remain within the assigned boundary.');
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO field_tasks (id, case_id, assignee_id, title, objective, checklist, context_note, due_at, status, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^task_/), 'case-1', 'field-001', 'Capture exterior', 'Record exterior observations and preserve source context.', JSON.stringify(['Record arrival time', 'Record vantage point']), 'Remain within the assigned boundary.', null, 'assigned', 'SUP-001', expect.any(String), expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'CREATE_FIELD_TASK', expect.stringMatching(/^task_/), expect.stringContaining('Capture exterior'), 'SUP-001');
+  });
+
+  it('prevents a field operator from completing another operator’s task', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    db.query.mockResolvedValueOnce({ values: [{ id: 'task-1', case_id: 'case-1', assignee_id: 'field-002', status: 'assigned', title: 'Other task' }] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().completeFieldTask('task-1', 'complete', 'Done.')).rejects.toThrow('only their own assigned tasks');
+    expect(db.run).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('controlled markings and disclosure history', () => {
+  it('persists a normalized case marking and audits the policy action', async () => {
+    const db = makeDb();
+    db.query.mockResolvedValue({ values: [{ id: 'marking-1', case_id: 'case-1', object_type: 'case', object_id: 'case-1', marking: 'PERSONAL_DATA', handling_instructions: 'Restrict external disclosure.', created_by: 'SUP-001', created_at: '2026-08-15T12:00:00.000Z' }] });
+    mocks.getDb.mockResolvedValue(db);
+    useCaseStore.setState({ activeCaseId: 'case-1' });
+
+    await useCaseStore.getState().addDataMarking('case', 'case-1', 'personal_data', 'Restrict external disclosure.');
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO data_markings (id, case_id, object_type, object_id, marking, handling_instructions, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^marking_/), 'case-1', 'case', 'case-1', 'PERSONAL_DATA', 'Restrict external disclosure.', 'SUP-001', expect.any(String), expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'APPLY_DATA_MARKING', expect.stringMatching(/^marking_/), expect.stringContaining('PERSONAL_DATA'), 'SUP-001');
+    expect(useCaseStore.getState().dataMarkings).toMatchObject([{ marking: 'PERSONAL_DATA', objectType: 'case' }]);
+  });
+
+  it('rejects malformed marking labels before writing to the database', async () => {
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+    useCaseStore.setState({ activeCaseId: 'case-1' });
+
+    await expect(useCaseStore.getState().addDataMarking('case', 'case-1', 'not valid!', '')).rejects.toThrow('Marking must contain');
+    expect(db.run).not.toHaveBeenCalled();
   });
 });

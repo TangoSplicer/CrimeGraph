@@ -7,7 +7,7 @@ import { can } from '../utils/permissions';
 
 export const DashboardScreen: React.FC = () => {
   const navigate = useNavigate();
-  const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase, caseAssignments, assignableFieldOperators, loadCaseAssignments, loadAssignableFieldOperators, assignFieldOperator, removeFieldAssignment } = useCaseStore();
+  const { cases, loadCases, setActiveCase, addCase, archiveCase, importCase, caseAssignments, assignableFieldOperators, loadCaseAssignments, loadAssignableFieldOperators, assignFieldOperator, removeFieldAssignment, fieldTasks, loadFieldTasks, createFieldTask, completeFieldTask } = useCaseStore();
   const { setIntentionalBackground, currentUser } = useAuthStore(); // 🚀 NEW: Import Intentional Background trigger
   const canCreateCase = can(currentUser?.role, 'case:create');
   const canImportCase = can(currentUser?.role, 'case:import');
@@ -25,6 +25,13 @@ export const DashboardScreen: React.FC = () => {
   const [assignmentNote, setAssignmentNote] = useState('');
   const [removalReason, setRemovalReason] = useState('');
   const [assignmentMsg, setAssignmentMsg] = useState('');
+  const [taskCaseId, setTaskCaseId] = useState<string | null>(null);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskObjective, setTaskObjective] = useState('');
+  const [taskChecklist, setTaskChecklist] = useState('');
+  const [taskContext, setTaskContext] = useState('');
+  const [taskDueAt, setTaskDueAt] = useState('');
+  const [taskCompletionNote, setTaskCompletionNote] = useState('');
 
   useEffect(() => { loadCases(); }, [loadCases]);
   useEffect(() => {
@@ -55,6 +62,7 @@ export const DashboardScreen: React.FC = () => {
     setRemovalReason('');
     setAssignmentMsg('');
     loadCaseAssignments(caseId).catch((error) => setAssignmentMsg(error instanceof Error ? error.message : 'Assignments could not be loaded.'));
+    loadFieldTasks(caseId).catch((error) => setAssignmentMsg(error instanceof Error ? error.message : 'Field tasks could not be loaded.'));
   };
 
   const handleAssignFieldOperator = async () => {
@@ -76,6 +84,33 @@ export const DashboardScreen: React.FC = () => {
       setAssignmentMsg('Field assignment removed.');
     } catch (error) {
       setAssignmentMsg(error instanceof Error ? error.message : 'Assignment could not be removed.');
+    }
+  };
+
+  const handleCreateFieldTask = async () => {
+    if (!assignmentCaseId || !assigneeId) return;
+    try {
+      await createFieldTask(assignmentCaseId, assigneeId, taskTitle, taskObjective, taskChecklist.split('\n'), taskContext, taskDueAt);
+      setTaskTitle(''); setTaskObjective(''); setTaskChecklist(''); setTaskContext(''); setTaskDueAt('');
+      setAssignmentMsg('Structured field task created and added to the local work queue.');
+    } catch (error) {
+      setAssignmentMsg(error instanceof Error ? error.message : 'Field task could not be created.');
+    }
+  };
+
+  const handleOpenTasks = (caseId: string) => {
+    setTaskCaseId(caseId);
+    setTaskCompletionNote('');
+    loadFieldTasks(caseId).catch((error) => setAssignmentMsg(error instanceof Error ? error.message : 'Field tasks could not be loaded.'));
+  };
+
+  const handleCompleteTask = async (taskId: string, status: 'complete' | 'unable') => {
+    try {
+      await completeFieldTask(taskId, status, taskCompletionNote);
+      setTaskCompletionNote('');
+      setAssignmentMsg(status === 'complete' ? 'Task completion submitted for handoff.' : 'Unable-to-complete reason recorded for handoff.');
+    } catch (error) {
+      setAssignmentMsg(error instanceof Error ? error.message : 'Task state could not be updated.');
     }
   };
 
@@ -147,7 +182,7 @@ export const DashboardScreen: React.FC = () => {
               {isFieldOperator && <p className="mb-3 text-[10px] leading-relaxed text-[#72a7f0]">{c.assignment_note || 'Assigned for field capture. Record observations and evidence for supervisory review.'}</p>}
               <div className="flex justify-between items-end border-t border-[#252a3a] pt-3">
                 <span className="text-[10px] text-[#7880a0] uppercase tracking-widest">{new Date(c.date_opened).toLocaleDateString()}</span>
-                {activeTab === 'active' && <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id).catch((error) => alert(error instanceof Error ? error.message : 'Unable to archive case.')); }} disabled={!canArchiveCase} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline disabled:opacity-40">Archive</button>}
+                <div className="flex items-center gap-3">{isFieldOperator && activeTab === 'active' && <button onClick={(event) => { event.stopPropagation(); handleOpenTasks(c.id); }} className="text-[10px] font-bold uppercase text-[#72a7f0] hover:underline">Tasks</button>}{activeTab === 'active' && <button onClick={(e) => { e.stopPropagation(); archiveCase(c.id).catch((error) => alert(error instanceof Error ? error.message : 'Unable to archive case.')); }} disabled={!canArchiveCase} className="text-[10px] text-[#e74c3c] font-bold uppercase hover:underline disabled:opacity-40">Archive</button>}</div>
               </div>
             </div>
           ))
@@ -167,8 +202,19 @@ export const DashboardScreen: React.FC = () => {
               </label>
               <button onClick={handleAssignFieldOperator} disabled={!assigneeId} className="w-full py-3 rounded bg-[#b893e6] text-[#0c0e14] text-xs font-bold uppercase disabled:opacity-40">Assign to operation</button>
             </div>
+            <section className="mt-5 border-t border-[#252a3a] pt-4 space-y-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-[#d8c8ff]">Structured field task</p><p className="mt-1 text-[10px] text-[#7880a0]">Task cards appear only in the selected operator’s local work queue. They do not transfer data between devices.</p></div><input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} maxLength={160} placeholder="Task title" className="w-full bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><textarea value={taskObjective} onChange={(event) => setTaskObjective(event.target.value)} maxLength={1000} placeholder="Objective and required outcome" className="w-full min-h-20 bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><textarea value={taskChecklist} onChange={(event) => setTaskChecklist(event.target.value)} maxLength={3000} placeholder="Checklist items, one per line (optional)" className="w-full min-h-20 bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><textarea value={taskContext} onChange={(event) => setTaskContext(event.target.value)} maxLength={1000} placeholder="Context or safety note (optional)" className="w-full min-h-16 bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /><label className="block text-[10px] font-bold uppercase text-[#7880a0]">Due window <span className="normal-case font-normal">(optional)</span><input type="datetime-local" value={taskDueAt} onChange={(event) => setTaskDueAt(event.target.value)} className="mt-1 w-full bg-[#0c0e14] border border-[#454d66] rounded p-3 text-xs text-white focus:border-[#b893e6] focus:outline-none" /></label><button onClick={handleCreateFieldTask} disabled={!assigneeId || taskTitle.trim().length < 3 || taskObjective.trim().length < 5} className="w-full py-3 rounded border border-[#b893e6] text-[#d8c8ff] text-xs font-bold uppercase disabled:opacity-40">Create field task</button></section>
             <div className="mt-5 border-t border-[#252a3a] pt-4 space-y-2"><p className="text-[10px] font-bold uppercase tracking-widest text-[#7880a0]">Current and historic assignments</p>{caseAssignments.length === 0 && <p className="text-xs text-[#7880a0]">No field assignments are recorded for this operation.</p>}{caseAssignments.map((assignment) => <article key={assignment.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><p className="text-xs font-mono font-bold text-[#dde1ec]">{assignment.operatorBadge}</p><p className="mt-1 text-[10px] text-[#7880a0]">{assignment.operatorName} · {assignment.status}</p></div><span className={`text-[9px] font-bold uppercase ${assignment.status === 'active' ? 'text-[#55c987]' : 'text-[#ff9d95]'}`}>{assignment.status}</span></div>{assignment.note && <p className="mt-2 text-[10px] text-[#dde1ec]">{assignment.note}</p>}{assignment.status === 'active' && <div className="mt-3 space-y-2"><input value={removalReason} onChange={(event) => setRemovalReason(event.target.value)} maxLength={500} placeholder="Removal reason (5+ characters)" className="w-full bg-[#14171f] border border-[#454d66] rounded p-2 text-xs text-white focus:border-[#c0392b] focus:outline-none" /><button onClick={() => handleRemoveAssignment(assignment.id)} disabled={removalReason.trim().length < 5} className="w-full py-2 rounded border border-[#c0392b] text-[#ff9d95] text-[10px] font-bold uppercase disabled:opacity-40">Remove assignment</button></div>}{assignment.status === 'removed' && <p className="mt-2 text-[9px] text-[#ff9d95]">Removed: {assignment.removalReason || 'No reason recorded'}</p>}</article>)}</div>
             {assignmentMsg && <p role="status" className="mt-4 text-[10px] font-bold text-[#d8c8ff]">{assignmentMsg}</p>}
+          </section>
+        </div>
+      )}
+
+      {taskCaseId && (
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-4">
+          <section role="dialog" aria-modal="true" aria-label="My field tasks" className="w-full max-w-md max-h-[80vh] overflow-y-auto bg-[#14171f] border border-[#3a7bd5] rounded-lg p-5 shadow-2xl">
+            <div className="flex justify-between gap-3 border-b border-[#252a3a] pb-3 mb-4"><div><h2 className="text-sm font-bold text-[#72a7f0] uppercase tracking-widest">My field tasks</h2><p className="mt-1 text-[10px] text-[#7880a0]">Complete a task with an optional handoff note, or return it with a specific inability reason.</p></div><button onClick={() => setTaskCaseId(null)} className="text-xs font-bold text-[#7880a0] uppercase">Close</button></div>
+            <div className="space-y-3">{fieldTasks.length === 0 ? <p className="text-xs italic text-[#7880a0]">No task cards are assigned to this operation.</p> : fieldTasks.map((task) => <article key={task.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><h3 className="text-xs font-bold text-[#dde1ec]">{task.title}</h3><p className="mt-1 text-[9px] uppercase font-bold text-[#72a7f0]">{task.status}</p></div>{task.dueAt && <span className="text-[9px] text-[#f7c86b]">Due {new Date(task.dueAt).toLocaleString()}</span>}</div><p className="mt-3 text-xs leading-relaxed text-[#dde1ec]">{task.objective}</p>{task.checklist.length > 0 && <ul className="mt-3 space-y-1 text-[10px] text-[#9aa3bb]">{task.checklist.map((item, index) => <li key={`${task.id}-${index}`}>□ {item}</li>)}</ul>}{task.contextNote && <p className="mt-3 rounded border border-[#454d66] bg-[#14171f] p-2 text-[10px] text-[#d8c8ff]">{task.contextNote}</p>}{task.status === 'assigned' ? <div className="mt-3 space-y-2"><textarea value={taskCompletionNote} onChange={(event) => setTaskCompletionNote(event.target.value)} maxLength={1000} placeholder="Completion handoff note, or reason unable to complete" className="w-full min-h-16 bg-[#14171f] border border-[#454d66] rounded p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /><div className="grid grid-cols-2 gap-2"><button onClick={() => handleCompleteTask(task.id, 'complete')} className="rounded bg-[#1d9a6c] py-2 text-[10px] font-bold uppercase text-white">Complete</button><button onClick={() => handleCompleteTask(task.id, 'unable')} disabled={taskCompletionNote.trim().length < 5} className="rounded border border-[#c0392b] py-2 text-[10px] font-bold uppercase text-[#ff9d95] disabled:opacity-40">Unable to complete</button></div></div> : <p className="mt-3 text-[10px] text-[#9aa3bb]">{task.status === 'complete' ? task.completionNote || 'Completed without an additional handoff note.' : `Returned: ${task.inabilityReason}`}</p>}</article>)}</div>
+            {assignmentMsg && <p role="status" className="mt-4 text-[10px] font-bold text-[#72a7f0]">{assignmentMsg}</p>}
           </section>
         </div>
       )}

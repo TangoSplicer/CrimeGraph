@@ -27,6 +27,11 @@ export interface DataMarking { id: string; caseId: string; objectType: MarkingOb
 export interface DisclosureRecord { id: string; dossierId: string; caseId: string; purpose: string; recipientDescription: string; authorizationReference: string | null; disclosedBy: string; disclosedAt: string; status: 'prepared' | 'shared' | 'cancelled'; manifestDigest: string; verificationStatus: string; }
 export type FieldTaskStatus = 'assigned' | 'complete' | 'unable';
 export interface FieldTask { id: string; caseId: string; assigneeId: string; assigneeBadge: string; assigneeName: string; title: string; objective: string; checklist: string[]; contextNote: string; dueAt: string | null; status: FieldTaskStatus; createdBy: string; createdAt: string; completedBy: string | null; completedAt: string | null; completionNote: string; inabilityReason: string; }
+export type PlaybookMilestoneStatus = 'not_started' | 'in_progress' | 'blocked' | 'complete';
+export type PlaybookOwnerRole = 'admin' | 'supervisor' | 'analyst' | 'field';
+export interface CasePlaybookMilestone { id: string; caseId: string; title: string; objective: string; category: string; ownerRole: PlaybookOwnerRole; status: PlaybookMilestoneStatus; dueAt: string | null; linkedObjectIds: string[]; blockerReason: string; completionNote: string; createdBy: string; createdAt: string; updatedBy: string; updatedAt: string; completedBy: string | null; completedAt: string | null; }
+export type CaseLeadStatus = 'new' | 'under_review' | 'actioned' | 'closed' | 'promoted';
+export interface CaseLead { id: string; caseId: string; title: string; summary: string; sourceType: string; sourceReference: string; receivedAt: string; sensitivityMarking: string; status: CaseLeadStatus; dispositionNote: string; promotedNodeId: string | null; promotedBy: string | null; promotedAt: string | null; createdBy: string; createdAt: string; updatedBy: string; updatedAt: string; }
 export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
 
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; review_status?: ReviewStatus; submitted_by?: string | null; submitted_at?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; review_notes?: string | null; }; }
@@ -46,6 +51,8 @@ interface CaseState {
   dataMarkings: DataMarking[];
   disclosureRecords: DisclosureRecord[];
   fieldTasks: FieldTask[];
+  playbookMilestones: CasePlaybookMilestone[];
+  caseLeads: CaseLead[];
   notes: IntelNote[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -67,8 +74,15 @@ interface CaseState {
   loadFieldTasks: (caseId: string) => Promise<void>;
   createFieldTask: (caseId: string, assigneeId: string, title: string, objective: string, checklist: string[], contextNote?: string, dueAt?: string) => Promise<void>;
   completeFieldTask: (taskId: string, status: Extract<FieldTaskStatus, 'complete' | 'unable'>, note: string) => Promise<void>;
+  loadPlaybookMilestones: (caseId: string) => Promise<void>;
+  createPlaybookMilestone: (caseId: string, title: string, objective: string, category: string, ownerRole: PlaybookOwnerRole, dueAt?: string, linkedObjectIds?: string[]) => Promise<void>;
+  updatePlaybookMilestone: (milestoneId: string, status: PlaybookMilestoneStatus, note?: string) => Promise<void>;
+  loadCaseLeads: (caseId: string) => Promise<void>;
+  createCaseLead: (caseId: string, title: string, summary: string, sourceType: string, sourceReference: string, sensitivityMarking?: string, receivedAt?: string) => Promise<void>;
+  updateCaseLead: (leadId: string, status: Exclude<CaseLeadStatus, 'promoted'>, dispositionNote?: string) => Promise<void>;
+  promoteCaseLead: (leadId: string, nodeType: string, confidence: number, attributes?: Record<string, string>, occurredAt?: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
-  addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput, occurredAt?: string) => Promise<void>;
+  addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput, occurredAt?: string) => Promise<string>;
   updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>, occurredAt?: string) => Promise<void>;
   addEdge: (sourceId: string, targetId: string, relationshipType: string) => Promise<void>;
   deleteNode: (nodeId: string) => Promise<void>;
@@ -216,6 +230,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   dataMarkings: [],
   disclosureRecords: [],
   fieldTasks: [],
+  playbookMilestones: [],
+  caseLeads: [],
   notes: [],
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -500,6 +516,137 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     await get().loadFieldTasks(String(task.case_id));
   },
 
+  loadPlaybookMilestones: async (caseId) => {
+    await ensureCaseAccess(caseId);
+    const db = await getDb();
+    const response = await db.query("SELECT * FROM case_playbook_milestones WHERE case_id = ? ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'not_started' THEN 2 ELSE 3 END, COALESCE(due_at, created_at), created_at", [caseId]);
+    set({ playbookMilestones: (response.values || []).map((record: any): CasePlaybookMilestone => ({
+      id: String(record.id), caseId: String(record.case_id), title: String(record.title), objective: String(record.objective), category: String(record.category),
+      ownerRole: ['admin', 'supervisor', 'analyst', 'field'].includes(record.owner_role) ? record.owner_role as PlaybookOwnerRole : 'analyst',
+      status: ['not_started', 'in_progress', 'blocked', 'complete'].includes(record.status) ? record.status as PlaybookMilestoneStatus : 'not_started',
+      dueAt: record.due_at ? String(record.due_at) : null, linkedObjectIds: parseLinkedNodes(record.linked_object_ids), blockerReason: String(record.blocker_reason || ''), completionNote: String(record.completion_note || ''),
+      createdBy: String(record.created_by), createdAt: String(record.created_at), updatedBy: String(record.updated_by), updatedAt: String(record.updated_at), completedBy: record.completed_by ? String(record.completed_by) : null, completedAt: record.completed_at ? String(record.completed_at) : null,
+    })) });
+  },
+
+  createPlaybookMilestone: async (caseId, title, objective, category, ownerRole, dueAt = '', linkedObjectIds = []) => {
+    assertCurrentPermission('case:plan');
+    await ensureCaseAccess(caseId);
+    const cleanTitle = title.trim().slice(0, 160);
+    const cleanObjective = objective.trim().slice(0, 1000);
+    const cleanCategory = category.trim().slice(0, 80);
+    const cleanDueAt = dueAt ? normaliseOccurredAt(dueAt) : null;
+    const cleanLinkedIds = [...new Set(linkedObjectIds.map((id) => id.trim().slice(0, 160)).filter(Boolean))].slice(0, 30);
+    if (cleanTitle.length < 3) throw new Error('Milestone title must contain at least three characters.');
+    if (cleanObjective.length < 5) throw new Error('Milestone objective must contain at least five characters.');
+    if (cleanCategory.length < 2) throw new Error('Milestone category must contain at least two characters.');
+    if (!['admin', 'supervisor', 'analyst', 'field'].includes(ownerRole)) throw new Error('Milestone owner role is not supported.');
+    const now = new Date().toISOString();
+    const milestoneId = createId('milestone');
+    const db = await getDb();
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO case_playbook_milestones (id, case_id, title, objective, category, owner_role, status, due_at, linked_object_ids, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [milestoneId, caseId, cleanTitle, cleanObjective, cleanCategory, ownerRole, 'not_started', cleanDueAt, JSON.stringify(cleanLinkedIds), currentOperator(), now, currentOperator(), now]);
+      await appendAuditEntry(db, 'CREATE_CASE_MILESTONE', milestoneId, `Created ${cleanCategory} milestone: ${cleanTitle}`, currentOperator());
+    });
+    await get().loadPlaybookMilestones(caseId);
+  },
+
+  updatePlaybookMilestone: async (milestoneId, status, note = '') => {
+    assertCurrentPermission('case:plan');
+    if (!['not_started', 'in_progress', 'blocked', 'complete'].includes(status)) throw new Error('Milestone status is not supported.');
+    const cleanNote = note.trim().slice(0, 1000);
+    if ((status === 'blocked' || status === 'complete') && cleanNote.length < 5) throw new Error(status === 'blocked' ? 'State the blocker before blocking a milestone.' : 'Record a completion note before completing a milestone.');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM case_playbook_milestones WHERE id = ? LIMIT 1', [milestoneId]);
+    const milestone = response.values?.[0];
+    if (!milestone) throw new Error('Case milestone was not found.');
+    await ensureCaseAccess(String(milestone.case_id));
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run('UPDATE case_playbook_milestones SET status = ?, blocker_reason = ?, completion_note = ?, completed_by = ?, completed_at = ?, updated_by = ?, updated_at = ? WHERE id = ?', [status, status === 'blocked' ? cleanNote : null, status === 'complete' ? cleanNote : null, status === 'complete' ? currentOperator() : null, status === 'complete' ? now : null, currentOperator(), now, milestoneId]);
+      await appendAuditEntry(db, status === 'blocked' ? 'BLOCK_CASE_MILESTONE' : status === 'complete' ? 'COMPLETE_CASE_MILESTONE' : 'UPDATE_CASE_MILESTONE', milestoneId, `${status.replace('_', ' ')} milestone: ${milestone.title}`, currentOperator());
+    });
+    await get().loadPlaybookMilestones(String(milestone.case_id));
+  },
+
+  loadCaseLeads: async (caseId) => {
+    await ensureCaseAccess(caseId);
+    const db = await getDb();
+    const response = await db.query("SELECT * FROM case_leads WHERE case_id = ? ORDER BY CASE status WHEN 'new' THEN 0 WHEN 'under_review' THEN 1 WHEN 'actioned' THEN 2 ELSE 3 END, received_at DESC", [caseId]);
+    set({ caseLeads: (response.values || []).map((record: any): CaseLead => ({
+      id: String(record.id), caseId: String(record.case_id), title: String(record.title), summary: String(record.summary), sourceType: String(record.source_type), sourceReference: String(record.source_reference), receivedAt: String(record.received_at),
+      sensitivityMarking: String(record.sensitivity_marking || ''), status: ['new', 'under_review', 'actioned', 'closed', 'promoted'].includes(record.status) ? record.status as CaseLeadStatus : 'new', dispositionNote: String(record.disposition_note || ''),
+      promotedNodeId: record.promoted_node_id ? String(record.promoted_node_id) : null, promotedBy: record.promoted_by ? String(record.promoted_by) : null, promotedAt: record.promoted_at ? String(record.promoted_at) : null,
+      createdBy: String(record.created_by), createdAt: String(record.created_at), updatedBy: String(record.updated_by), updatedAt: String(record.updated_at),
+    })) });
+  },
+
+  createCaseLead: async (caseId, title, summary, sourceType, sourceReference, sensitivityMarking = '', receivedAt = '') => {
+    assertCurrentPermission('lead:create');
+    await ensureCaseAccess(caseId);
+    const cleanTitle = title.trim().slice(0, 160);
+    const cleanSummary = summary.trim().slice(0, 3000);
+    const cleanSourceType = sourceType.trim().slice(0, 80);
+    const cleanSourceReference = sourceReference.trim().slice(0, 240);
+    const cleanSensitivity = sensitivityMarking.trim().toUpperCase().slice(0, 80);
+    const timestamp = receivedAt ? normaliseOccurredAt(receivedAt) : new Date().toISOString();
+    if (cleanTitle.length < 3) throw new Error('Lead title must contain at least three characters.');
+    if (cleanSummary.length < 5) throw new Error('Lead summary must contain at least five characters.');
+    if (!cleanSourceType || !cleanSourceReference) throw new Error('Lead source type and reference are required.');
+    const now = new Date().toISOString();
+    const leadId = createId('lead');
+    const db = await getDb();
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO case_leads (id, case_id, title, summary, source_type, source_reference, received_at, sensitivity_marking, status, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [leadId, caseId, cleanTitle, cleanSummary, cleanSourceType, cleanSourceReference, timestamp, cleanSensitivity || null, 'new', currentOperator(), now, currentOperator(), now]);
+      await appendAuditEntry(db, 'CREATE_CASE_LEAD', leadId, `Recorded local lead: ${cleanTitle}`, currentOperator());
+    });
+    await get().loadCaseLeads(caseId);
+  },
+
+  updateCaseLead: async (leadId, status, dispositionNote = '') => {
+    assertCurrentPermission('lead:manage');
+    if (!['new', 'under_review', 'actioned', 'closed'].includes(status)) throw new Error('Lead status is not supported.');
+    const cleanNote = dispositionNote.trim().slice(0, 1000);
+    if ((status === 'actioned' || status === 'closed') && cleanNote.length < 5) throw new Error('Record a disposition note before closing or actioning a lead.');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM case_leads WHERE id = ? LIMIT 1', [leadId]);
+    const lead = response.values?.[0];
+    if (!lead) throw new Error('Case lead was not found.');
+    if (lead.status === 'promoted') throw new Error('A promoted lead is immutable. Update the linked intelligence record instead.');
+    await ensureCaseAccess(String(lead.case_id));
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run('UPDATE case_leads SET status = ?, disposition_note = ?, updated_by = ?, updated_at = ? WHERE id = ?', [status, cleanNote || null, currentOperator(), now, leadId]);
+      await appendAuditEntry(db, 'UPDATE_CASE_LEAD', leadId, `${status.replace('_', ' ')} local lead: ${lead.title}`, currentOperator());
+    });
+    await get().loadCaseLeads(String(lead.case_id));
+  },
+
+  promoteCaseLead: async (leadId, nodeType, confidence, attributes = {}, occurredAt = '') => {
+    assertCurrentPermission('lead:manage');
+    assertCurrentPermission('intelligence:create');
+    if (!ENTITY_TYPES.has(nodeType) || nodeType === 'evidence') throw new Error('Choose a non-evidence intelligence type when promoting a lead.');
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM case_leads WHERE id = ? LIMIT 1', [leadId]);
+    const lead = response.values?.[0];
+    if (!lead) throw new Error('Case lead was not found.');
+    if (lead.status === 'promoted') throw new Error('This lead has already been promoted to intelligence.');
+    if (get().activeCaseId !== String(lead.case_id)) throw new Error('Open the lead’s case before promoting it to intelligence.');
+    await ensureCaseAccess(String(lead.case_id));
+    const now = new Date().toISOString();
+    const nodeId = createId('node');
+    const cleanAttributes = normaliseAttributes({ ...attributes, 'Lead reference': String(lead.id), 'Lead source': `${String(lead.source_type)}: ${String(lead.source_reference)}` });
+    const normalisedOccurredAt = normaliseOccurredAt(occurredAt || String(lead.received_at));
+    const cleanLabel = String(lead.title).trim().slice(0, 160);
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status, submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [nodeId, lead.case_id, cleanLabel, nodeType, Math.max(1, Math.min(5, Math.round(confidence))), now, normalisedOccurredAt, JSON.stringify(cleanAttributes), 'not_required', null, null]);
+      await db.run("UPDATE case_leads SET status = 'promoted', disposition_note = ?, promoted_node_id = ?, promoted_by = ?, promoted_at = ?, updated_by = ?, updated_at = ? WHERE id = ?", ['Promoted to intelligence record.', nodeId, currentOperator(), now, currentOperator(), now, leadId]);
+      await appendAuditEntry(db, 'PROMOTE_CASE_LEAD', leadId, `Promoted local lead to ${nodeType}: ${cleanLabel} (${nodeId})`, currentOperator());
+    });
+    set({ graphElements: [...get().graphElements, { data: { id: nodeId, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, occurred_at: normalisedOccurredAt, attributes: cleanAttributes, review_status: 'not_required', submitted_by: null, submitted_at: null, reviewed_by: null, reviewed_at: null, review_notes: null } }] });
+    await get().loadCaseLeads(String(lead.case_id));
+  },
+
   loadGraphElements: async (caseId) => {
     await ensureCaseAccess(caseId);
     const db = await getDb();
@@ -593,6 +740,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     });
     set({ graphElements: [...graphElements, { data: { id, label: cleanLabel, type: nodeType, confidence: Math.max(1, Math.min(5, Math.round(confidence))), created_at: now, occurred_at: normalisedOccurredAt, attributes: cleanAttributes, evidence: evidenceRecord, review_status: reviewStatus, submitted_by: submittedBy, submitted_at: submittedAt, reviewed_by: null, reviewed_at: null, review_notes: null } }] });
     if (reviewStatus === 'pending' && can(useAuthStore.getState().currentUser?.role, 'intelligence:review')) await get().loadReviewQueue();
+    return id;
   },
 
   updateNode: async (id, label, confidence, attributes, occurredAt) => {

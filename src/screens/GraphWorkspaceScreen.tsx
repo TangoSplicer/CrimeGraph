@@ -18,7 +18,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
     graphElements, selectedNodeId, setSelectedNodeId, selectedEdgeId, setSelectedEdgeId,
     connectingFromId, setConnectingFromId, deleteNode, deleteEdge, updateNode, // 🚀 NEW updateNode
     activeCaseId, cases, exportActiveCase, hiddenNodeTypes, toggleFilter,
-    notes, addNote, deleteNote, dataMarkings, disclosureRecords, loadDataMarkings, addDataMarking, removeDataMarking, loadDisclosureRecords
+    notes, addNote, deleteNote, dataMarkings, disclosureRecords, loadDataMarkings, addDataMarking, removeDataMarking, loadDisclosureRecords,
+    playbookMilestones, loadPlaybookMilestones, createPlaybookMilestone, updatePlaybookMilestone,
+    caseLeads, loadCaseLeads, createCaseLead, updateCaseLead, promoteCaseLead
   } = useCaseStore();
   
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -31,6 +33,21 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [caseSearch, setCaseSearch] = useState('');
   const [newNoteContent, setNewNoteContent] = useState('');
   const [taggedNodes, setTaggedNodes] = useState<string[]>([]);
+  const [isPlaybookOpen, setIsPlaybookOpen] = useState(false);
+  const [isLeadRegisterOpen, setIsLeadRegisterOpen] = useState(false);
+  const [workspaceMessage, setWorkspaceMessage] = useState('');
+  const [milestoneTitle, setMilestoneTitle] = useState('');
+  const [milestoneObjective, setMilestoneObjective] = useState('');
+  const [milestoneCategory, setMilestoneCategory] = useState('Collection');
+  const [milestoneOwnerRole, setMilestoneOwnerRole] = useState<'admin' | 'supervisor' | 'analyst' | 'field'>('analyst');
+  const [milestoneDueAt, setMilestoneDueAt] = useState('');
+  const [leadTitle, setLeadTitle] = useState('');
+  const [leadSummary, setLeadSummary] = useState('');
+  const [leadSourceType, setLeadSourceType] = useState('operator observation');
+  const [leadSourceReference, setLeadSourceReference] = useState('');
+  const [leadSensitivity, setLeadSensitivity] = useState('');
+  const [leadReceivedAt, setLeadReceivedAt] = useState(new Date().toISOString().slice(0, 16));
+  const [leadPromotionTypes, setLeadPromotionTypes] = useState<Record<string, string>>({});
 
   // 🚀 NEW: Edit Node State
   const [isEditingNode, setIsEditingNode] = useState(false);
@@ -49,6 +66,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const canDeleteIntelligence = can(currentUser?.role, 'intelligence:delete');
   const canExportCase = can(currentUser?.role, 'case:export');
   const canMarkCase = can(currentUser?.role, 'case:mark');
+  const canPlanCase = can(currentUser?.role, 'case:plan');
+  const canCreateLead = can(currentUser?.role, 'lead:create');
+  const canManageLeads = can(currentUser?.role, 'lead:manage');
 
   useEffect(() => {
     if (!activeCaseId) navigate('/');
@@ -149,6 +169,72 @@ export const GraphWorkspaceScreen: React.FC = () => {
     if (canExportCase) loadDisclosureRecords(activeCaseId).catch((error) => setDossierMessage(error instanceof Error ? error.message : 'Disclosure history is unavailable.'));
   };
 
+  const openPlaybook = () => {
+    if (!activeCaseId) return;
+    setWorkspaceMessage('');
+    setIsPlaybookOpen(true);
+    loadPlaybookMilestones(activeCaseId).catch((error) => setWorkspaceMessage(error instanceof Error ? error.message : 'Case playbook is unavailable.'));
+  };
+
+  const openLeadRegister = () => {
+    if (!activeCaseId) return;
+    setWorkspaceMessage('');
+    setIsLeadRegisterOpen(true);
+    loadCaseLeads(activeCaseId).catch((error) => setWorkspaceMessage(error instanceof Error ? error.message : 'Local lead register is unavailable.'));
+  };
+
+  const handleCreateMilestone = async () => {
+    if (!activeCaseId) return;
+    try {
+      await createPlaybookMilestone(activeCaseId, milestoneTitle, milestoneObjective, milestoneCategory, milestoneOwnerRole, milestoneDueAt);
+      setMilestoneTitle(''); setMilestoneObjective(''); setMilestoneDueAt('');
+      setWorkspaceMessage('Case playbook milestone recorded locally.');
+    } catch (error) {
+      setWorkspaceMessage(error instanceof Error ? error.message : 'Milestone could not be created.');
+    }
+  };
+
+  const handleMilestoneStatus = async (milestoneId: string, status: 'in_progress' | 'blocked' | 'complete') => {
+    const note = status === 'in_progress' ? '' : window.prompt(status === 'blocked' ? 'State the blocker (5+ characters):' : 'Record the completion note (5+ characters):') || '';
+    try {
+      await updatePlaybookMilestone(milestoneId, status, note);
+      setWorkspaceMessage(`Milestone ${status.replace('_', ' ')} and audited.`);
+    } catch (error) {
+      setWorkspaceMessage(error instanceof Error ? error.message : 'Milestone state could not be updated.');
+    }
+  };
+
+  const handleCreateLead = async () => {
+    if (!activeCaseId) return;
+    try {
+      await createCaseLead(activeCaseId, leadTitle, leadSummary, leadSourceType, leadSourceReference, leadSensitivity, leadReceivedAt);
+      setLeadTitle(''); setLeadSummary(''); setLeadSourceReference(''); setLeadSensitivity(''); setLeadReceivedAt(new Date().toISOString().slice(0, 16));
+      setWorkspaceMessage('Local lead recorded with its stated source.');
+    } catch (error) {
+      setWorkspaceMessage(error instanceof Error ? error.message : 'Lead could not be recorded.');
+    }
+  };
+
+  const handleLeadDisposition = async (leadId: string, status: 'under_review' | 'actioned' | 'closed') => {
+    const note = status === 'under_review' ? '' : window.prompt(status === 'actioned' ? 'Record the action taken (5+ characters):' : 'Record the closure disposition (5+ characters):') || '';
+    try {
+      await updateCaseLead(leadId, status, note);
+      setWorkspaceMessage(`Lead marked ${status.replace('_', ' ')} and audited.`);
+    } catch (error) {
+      setWorkspaceMessage(error instanceof Error ? error.message : 'Lead disposition could not be updated.');
+    }
+  };
+
+  const handlePromoteLead = async (leadId: string) => {
+    const type = leadPromotionTypes[leadId] || 'event';
+    try {
+      await promoteCaseLead(leadId, type, 3);
+      setWorkspaceMessage('Lead promoted to a linked intelligence record. Review the source metadata before relying on it.');
+    } catch (error) {
+      setWorkspaceMessage(error instanceof Error ? error.message : 'Lead could not be promoted.');
+    }
+  };
+
   const handleAddEditAttribute = () => setEditAttributes([...editAttributes, { key: '', value: '' }]);
   const handleUpdateEditAttribute = (index: number, field: 'key'|'value', val: string) => {
     const newAttrs = [...editAttributes];
@@ -218,7 +304,29 @@ export const GraphWorkspaceScreen: React.FC = () => {
             <input value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Search entities, notes, evidence…" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[10px] text-white focus:border-[#55c987] focus:outline-none" />
             {caseSearch.trim().length > 0 && <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">{caseSearch.trim().length < 2 ? <p className="text-[9px] text-[#7880a0]">Enter at least two characters.</p> : caseSearchResults.length === 0 ? <p className="text-[9px] italic text-[#7880a0]">No local records match this query.</p> : caseSearchResults.map((result) => <button key={`${result.kind}:${result.id}`} onClick={() => openQualityRecord(result.id)} className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-left"><p className="text-[10px] font-bold text-[#dde1ec]">{result.title}</p><p className="mt-1 text-[9px] text-[#7880a0]">{result.kind} · {result.summary}</p></button>)}</div>}
           </div>
-          {(canMarkCase || canExportCase) && <button onClick={openDossierControls} className="mt-3 w-full rounded border border-[#b893e6] py-2 text-[10px] font-bold uppercase text-[#d8c8ff]">Dossier and marking controls</button>}
+          {canPlanCase && <button onClick={openPlaybook} className="mt-3 w-full rounded border border-[#3a7bd5] py-2 text-[10px] font-bold uppercase text-[#72a7f0]">Case playbook</button>}
+          {(canCreateLead || canManageLeads) && <button onClick={openLeadRegister} className="mt-2 w-full rounded border border-[#f39c12] py-2 text-[10px] font-bold uppercase text-[#f7c86b]">Local lead register</button>}
+          {(canMarkCase || canExportCase) && <button onClick={openDossierControls} className="mt-2 w-full rounded border border-[#b893e6] py-2 text-[10px] font-bold uppercase text-[#d8c8ff]">Dossier and marking controls</button>}
+        </div>
+      )}
+
+      {isPlaybookOpen && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/80 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Case playbook" className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg border border-[#3a7bd5] bg-[#14171f] p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3 border-b border-[#252a3a] pb-3"><div><h2 className="text-sm font-bold uppercase tracking-widest text-[#72a7f0]">Case playbook</h2><p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">Milestones record accountable work, evidence links, and blockers. They are not productivity or outcome scores.</p></div><button onClick={() => setIsPlaybookOpen(false)} className="text-xs font-bold uppercase text-[#7880a0]">Close</button></div>
+            <div className="space-y-3">{canPlanCase && <section className="space-y-2 rounded border border-[#3a7bd5]/50 bg-[#0c0e14] p-3"><p className="text-[10px] font-bold uppercase tracking-widest text-[#72a7f0]">New milestone</p><input value={milestoneTitle} onChange={(event) => setMilestoneTitle(event.target.value)} maxLength={160} placeholder="Milestone title" className="w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /><textarea value={milestoneObjective} onChange={(event) => setMilestoneObjective(event.target.value)} maxLength={1000} placeholder="Objective and verifiable outcome" className="min-h-20 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /><div className="grid grid-cols-2 gap-2"><input value={milestoneCategory} onChange={(event) => setMilestoneCategory(event.target.value)} maxLength={80} placeholder="Category" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /><select value={milestoneOwnerRole} onChange={(event) => setMilestoneOwnerRole(event.target.value as typeof milestoneOwnerRole)} className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none"><option value="analyst">Analyst</option><option value="supervisor">Supervisor</option><option value="field">Field</option><option value="admin">Admin</option></select></div><label className="block text-[10px] font-bold uppercase text-[#7880a0]">Due window <span className="normal-case font-normal">(optional)</span><input type="datetime-local" value={milestoneDueAt} onChange={(event) => setMilestoneDueAt(event.target.value)} className="mt-1 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /></label><button onClick={handleCreateMilestone} disabled={milestoneTitle.trim().length < 3 || milestoneObjective.trim().length < 5 || milestoneCategory.trim().length < 2} className="w-full rounded bg-[#3a7bd5] py-2 text-[10px] font-bold uppercase text-white disabled:opacity-40">Add milestone</button></section>}{playbookMilestones.length === 0 ? <p className="py-3 text-center text-xs italic text-[#7880a0]">No playbook milestones are recorded for this case.</p> : playbookMilestones.map((milestone) => <article key={milestone.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><h3 className="text-xs font-bold text-[#dde1ec]">{milestone.title}</h3><p className="mt-1 text-[9px] uppercase text-[#72a7f0]">{milestone.category} · {milestone.ownerRole} · {milestone.status.replace('_', ' ')}</p></div>{milestone.dueAt && <span className="text-[9px] text-[#f7c86b]">Due {new Date(milestone.dueAt).toLocaleString()}</span>}</div><p className="mt-2 text-[10px] leading-relaxed text-[#9aa3bb]">{milestone.objective}</p>{milestone.status === 'blocked' && <p className="mt-2 rounded border border-[#c0392b]/60 bg-[#c0392b]/10 p-2 text-[10px] text-[#ff9d95]">Blocker: {milestone.blockerReason}</p>}{milestone.status === 'complete' && <p className="mt-2 rounded border border-[#1d9a6c]/60 bg-[#1d9a6c]/10 p-2 text-[10px] text-[#55c987]">Completion: {milestone.completionNote}</p>}{canPlanCase && milestone.status !== 'complete' && <div className="mt-3 grid grid-cols-3 gap-2"><button onClick={() => handleMilestoneStatus(milestone.id, 'in_progress')} className="rounded border border-[#3a7bd5] py-2 text-[9px] font-bold uppercase text-[#72a7f0]">Start</button><button onClick={() => handleMilestoneStatus(milestone.id, 'blocked')} className="rounded border border-[#c0392b] py-2 text-[9px] font-bold uppercase text-[#ff9d95]">Block</button><button onClick={() => handleMilestoneStatus(milestone.id, 'complete')} className="rounded bg-[#1d9a6c] py-2 text-[9px] font-bold uppercase text-white">Complete</button></div>}</article>)}</div>
+            {workspaceMessage && <p role="status" className="mt-4 text-[10px] font-bold text-[#72a7f0]">{workspaceMessage}</p>}
+          </section>
+        </div>
+      )}
+
+      {isLeadRegisterOpen && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/80 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Local lead register" className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg border border-[#f39c12] bg-[#14171f] p-5 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3 border-b border-[#252a3a] pb-3"><div><h2 className="text-sm font-bold uppercase tracking-widest text-[#f7c86b]">Local lead register</h2><p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">Local leads retain their stated source and are promoted only by an authorized operator’s deliberate action.</p></div><button onClick={() => setIsLeadRegisterOpen(false)} className="text-xs font-bold uppercase text-[#7880a0]">Close</button></div>
+            <div className="space-y-3">{canCreateLead && <section className="space-y-2 rounded border border-[#f39c12]/50 bg-[#0c0e14] p-3"><p className="text-[10px] font-bold uppercase tracking-widest text-[#f7c86b]">Record local lead</p><input value={leadTitle} onChange={(event) => setLeadTitle(event.target.value)} maxLength={160} placeholder="Lead title" className="w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /><textarea value={leadSummary} onChange={(event) => setLeadSummary(event.target.value)} maxLength={3000} placeholder="Factual summary; distinguish observation from interpretation" className="min-h-20 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /><div className="grid grid-cols-2 gap-2"><input value={leadSourceType} onChange={(event) => setLeadSourceType(event.target.value)} maxLength={80} placeholder="Source type" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /><input value={leadSourceReference} onChange={(event) => setLeadSourceReference(event.target.value)} maxLength={240} placeholder="Source reference" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /></div><div className="grid grid-cols-2 gap-2"><input value={leadSensitivity} onChange={(event) => setLeadSensitivity(event.target.value.toUpperCase())} maxLength={80} placeholder="Sensitivity marking (optional)" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /><input type="datetime-local" value={leadReceivedAt} onChange={(event) => setLeadReceivedAt(event.target.value)} className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none" /></div><button onClick={handleCreateLead} disabled={leadTitle.trim().length < 3 || leadSummary.trim().length < 5 || !leadSourceType.trim() || !leadSourceReference.trim()} className="w-full rounded bg-[#f39c12] py-2 text-[10px] font-bold uppercase text-white disabled:opacity-40">Record lead</button></section>}{caseLeads.length === 0 ? <p className="py-3 text-center text-xs italic text-[#7880a0]">No local leads are recorded for this case.</p> : caseLeads.map((lead) => <article key={lead.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><h3 className="text-xs font-bold text-[#dde1ec]">{lead.title}</h3><p className="mt-1 text-[9px] uppercase text-[#f7c86b]">{lead.status.replace('_', ' ')} · {lead.sourceType}</p></div><span className="text-[9px] text-[#7880a0]">{new Date(lead.receivedAt).toLocaleString()}</span></div><p className="mt-2 whitespace-pre-wrap text-[10px] leading-relaxed text-[#9aa3bb]">{lead.summary}</p><p className="mt-2 text-[9px] text-[#7880a0]">Source: {lead.sourceReference}{lead.sensitivityMarking ? ` · ${lead.sensitivityMarking}` : ''}</p>{lead.dispositionNote && <p className="mt-2 rounded border border-[#454d66] bg-[#14171f] p-2 text-[10px] text-[#dde1ec]">{lead.dispositionNote}</p>}{canManageLeads && lead.status !== 'promoted' && <div className="mt-3 space-y-2"><div className="grid grid-cols-3 gap-2"><button onClick={() => handleLeadDisposition(lead.id, 'under_review')} className="rounded border border-[#3a7bd5] py-2 text-[9px] font-bold uppercase text-[#72a7f0]">Review</button><button onClick={() => handleLeadDisposition(lead.id, 'actioned')} className="rounded border border-[#1d9a6c] py-2 text-[9px] font-bold uppercase text-[#55c987]">Actioned</button><button onClick={() => handleLeadDisposition(lead.id, 'closed')} className="rounded border border-[#c0392b] py-2 text-[9px] font-bold uppercase text-[#ff9d95]">Close</button></div><div className="grid grid-cols-[1fr_auto] gap-2"><select value={leadPromotionTypes[lead.id] || 'event'} onChange={(event) => setLeadPromotionTypes((current) => ({ ...current, [lead.id]: event.target.value }))} className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#f39c12] focus:outline-none">{entityTypes.filter((type) => type !== 'evidence').map((type) => <option key={type} value={type}>{type.replace('_', ' ')}</option>)}</select><button onClick={() => handlePromoteLead(lead.id)} className="rounded bg-[#f39c12] px-3 py-2 text-[9px] font-bold uppercase text-white">Promote</button></div></div>}{lead.status === 'promoted' && <p className="mt-3 text-[10px] font-bold text-[#55c987]">Promoted to local intelligence record {lead.promotedNodeId}.</p>}</article>)}</div>
+            {workspaceMessage && <p role="status" className="mt-4 text-[10px] font-bold text-[#f7c86b]">{workspaceMessage}</p>}
+          </section>
         </div>
       )}
 

@@ -121,6 +121,49 @@ CREATE TABLE IF NOT EXISTS field_tasks (
   FOREIGN KEY(assignee_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS case_playbook_milestones (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  objective TEXT NOT NULL,
+  category TEXT NOT NULL,
+  owner_role TEXT NOT NULL CHECK(owner_role IN ('admin', 'supervisor', 'analyst', 'field')),
+  status TEXT NOT NULL CHECK(status IN ('not_started', 'in_progress', 'blocked', 'complete')),
+  due_at TEXT,
+  linked_object_ids TEXT NOT NULL DEFAULT '[]',
+  blocker_reason TEXT,
+  completion_note TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_by TEXT,
+  completed_at TEXT,
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS case_leads (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_reference TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  sensitivity_marking TEXT,
+  status TEXT NOT NULL CHECK(status IN ('new', 'under_review', 'actioned', 'closed', 'promoted')),
+  disposition_note TEXT,
+  promoted_node_id TEXT,
+  promoted_by TEXT,
+  promoted_at TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(case_id) REFERENCES cases(id),
+  FOREIGN KEY(promoted_node_id) REFERENCES nodes(id)
+);
+
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL,
@@ -215,6 +258,9 @@ CREATE INDEX IF NOT EXISTS idx_forensic_dossiers_case_exported ON forensic_dossi
 CREATE INDEX IF NOT EXISTS idx_disclosure_register_case_disclosed ON disclosure_register(case_id, disclosed_at);
 CREATE INDEX IF NOT EXISTS idx_field_tasks_assignee_status ON field_tasks(assignee_id, status, due_at);
 CREATE INDEX IF NOT EXISTS idx_field_tasks_case_status ON field_tasks(case_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_playbook_milestones_case_status ON case_playbook_milestones(case_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_case_leads_case_status ON case_leads(case_id, status, received_at);
+CREATE INDEX IF NOT EXISTS idx_case_leads_promoted_node ON case_leads(promoted_node_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);

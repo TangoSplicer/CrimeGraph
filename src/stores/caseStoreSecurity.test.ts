@@ -77,7 +77,7 @@ beforeEach(() => {
   mocks.appendAuditEntry.mockResolvedValue(undefined);
   useCaseStore.setState({
     cases: [], activeCaseId: null, graphElements: [], auditLogs: [], auditVerification: null,
-    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
+    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], playbookMilestones: [], caseLeads: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
   });
 });
 
@@ -221,6 +221,52 @@ describe('case assignment and field work queue', () => {
   });
 });
 
+
+describe('case playbook and local lead register', () => {
+  it('creates an accountable case milestone and writes a ledger record', async () => {
+    const db = makeDb();
+    db.query.mockResolvedValue({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().createPlaybookMilestone('case-1', 'Confirm source', 'Record and verify the stated collection source.', 'Collection', 'analyst', '', ['node-1']);
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO case_playbook_milestones (id, case_id, title, objective, category, owner_role, status, due_at, linked_object_ids, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^milestone_/), 'case-1', 'Confirm source', 'Record and verify the stated collection source.', 'Collection', 'analyst', 'not_started', null, JSON.stringify(['node-1']), 'SUP-001', expect.any(String), 'SUP-001', expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'CREATE_CASE_MILESTONE', expect.stringMatching(/^milestone_/), expect.stringContaining('Confirm source'), 'SUP-001');
+  });
+
+  it('promotes a manager-reviewed lead into an explicitly linked intelligence node', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ id: 'lead-1', case_id: 'case-1', title: 'Observed meeting', source_type: 'operator observation', source_reference: 'LOG-1', received_at: '2026-08-15T12:00:00.000Z', status: 'under_review' }] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+    useCaseStore.setState({ activeCaseId: 'case-1' });
+
+    await useCaseStore.getState().promoteCaseLead('lead-1', 'event', 3, { Venue: 'Test location' });
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status, submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^node_/), 'case-1', 'Observed meeting', 'event', 3, expect.any(String), '2026-08-15T12:00:00.000Z', expect.stringContaining('lead-1'), 'not_required', null, null],
+    );
+    expect(db.run).toHaveBeenCalledWith(
+      "UPDATE case_leads SET status = 'promoted', disposition_note = ?, promoted_node_id = ?, promoted_by = ?, promoted_at = ?, updated_by = ?, updated_at = ? WHERE id = ?",
+      ['Promoted to intelligence record.', expect.stringMatching(/^node_/), 'SUP-001', expect.any(String), 'SUP-001', expect.any(String), 'lead-1'],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'PROMOTE_CASE_LEAD', 'lead-1', expect.stringContaining('Observed meeting'), 'SUP-001');
+  });
+
+  it('fails closed before reading a lead when a field account attempts lead promotion', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().promoteCaseLead('lead-1', 'event', 3)).rejects.toThrow('lead:manage');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
 
 describe('controlled markings and disclosure history', () => {
   it('persists a normalized case marking and audits the policy action', async () => {

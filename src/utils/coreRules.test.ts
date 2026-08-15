@@ -31,6 +31,11 @@ describe('permission policy', () => {
     expect(can('field', 'case:mark')).toBe(false);
     expect(can('field', 'field:task:complete')).toBe(true);
     expect(can('analyst', 'field:task:complete')).toBe(false);
+    expect(can('supervisor', 'case:plan')).toBe(true);
+    expect(can('analyst', 'lead:manage')).toBe(true);
+    expect(can('field', 'lead:create')).toBe(true);
+    expect(can('field', 'case:plan')).toBe(false);
+    expect(can('field', 'lead:manage')).toBe(false);
   });
 });
 

@@ -154,6 +154,7 @@ async function initialiseDatabase() {
       CREATE TABLE IF NOT EXISTS field_tasks (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, assignee_id TEXT NOT NULL, title TEXT NOT NULL, objective TEXT NOT NULL, checklist TEXT NOT NULL, context_note TEXT, due_at TEXT, status TEXT NOT NULL CHECK(status IN ('assigned', 'complete', 'unable')), created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_by TEXT, completed_at TEXT, completion_note TEXT, inability_reason TEXT, FOREIGN KEY(case_id) REFERENCES cases(id), FOREIGN KEY(assignee_id) REFERENCES users(id));
       CREATE TABLE IF NOT EXISTS case_playbook_milestones (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, objective TEXT NOT NULL, category TEXT NOT NULL, owner_role TEXT NOT NULL CHECK(owner_role IN ('admin', 'supervisor', 'analyst', 'field')), status TEXT NOT NULL CHECK(status IN ('not_started', 'in_progress', 'blocked', 'complete')), due_at TEXT, linked_object_ids TEXT NOT NULL DEFAULT '[]', blocker_reason TEXT, completion_note TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL, completed_by TEXT, completed_at TEXT, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS case_leads (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, source_type TEXT NOT NULL, source_reference TEXT NOT NULL, received_at TEXT NOT NULL, sensitivity_marking TEXT, status TEXT NOT NULL CHECK(status IN ('new', 'under_review', 'actioned', 'closed', 'promoted')), disposition_note TEXT, promoted_node_id TEXT, promoted_by TEXT, promoted_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id), FOREIGN KEY(promoted_node_id) REFERENCES nodes(id));
+      CREATE TABLE IF NOT EXISTS saved_graph_queries (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, name TEXT NOT NULL, query_text TEXT NOT NULL, node_types TEXT NOT NULL DEFAULT '[]', include_relationships INTEGER NOT NULL DEFAULT 1 CHECK(include_relationships IN (0, 1)), created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS edges (id TEXT PRIMARY KEY, case_id TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, label TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(case_id) REFERENCES cases(id));
       CREATE TABLE IF NOT EXISTS audit_logs (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, details TEXT, previous_hash TEXT, entry_hash TEXT);
       
@@ -193,6 +194,23 @@ async function initialiseDatabase() {
         created_by TEXT NOT NULL,
         FOREIGN KEY(case_id) REFERENCES cases(id),
         FOREIGN KEY(node_id) REFERENCES nodes(id)
+      );
+      CREATE TABLE IF NOT EXISTS evidence_derivatives (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        parent_node_id TEXT NOT NULL,
+        parent_evidence_fingerprint TEXT NOT NULL,
+        source_attachment_digest TEXT,
+        record_type TEXT NOT NULL CHECK(record_type IN ('annotation', 'transcript_excerpt', 'review_note', 'redaction_instruction')),
+        label TEXT NOT NULL,
+        annotation_text TEXT NOT NULL,
+        timecode_start_seconds REAL,
+        timecode_end_seconds REAL,
+        record_digest TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id),
+        FOREIGN KEY(parent_node_id) REFERENCES nodes(id)
       );
     `;
     await db.execute(createTables);
@@ -252,12 +270,15 @@ async function initialiseDatabase() {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_playbook_milestones_case_status ON case_playbook_milestones(case_id, status, due_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_case_leads_case_status ON case_leads(case_id, status, received_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_case_leads_promoted_node ON case_leads(promoted_node_id);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_saved_graph_queries_case ON saved_graph_queries(case_id, updated_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_parent ON evidence_derivatives(parent_node_id, created_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_case ON evidence_derivatives(case_id, created_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);');
     } catch (indexError) {
       console.warn('Database index creation skipped.', indexError);

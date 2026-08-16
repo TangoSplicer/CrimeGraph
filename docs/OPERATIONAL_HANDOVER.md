@@ -4,7 +4,7 @@
 
 **Mainline merge:** Pull request [#1](https://github.com/TangoSplicer/CrimeGraph/pull/1)
 
-**Scope:** device-bound protected storage, secure evidence media, controlled forensic dossiers and disclosure records, analyst-controlled quality review, case playbooks, local lead registers, secure operator lifecycle management, structured field work queues and evidence intake, truthful device assurance, and release assurance.
+**Scope:** device-bound protected storage, secure evidence media, evidence derivative and annotation ledger, controlled forensic dossiers and disclosure records, analyst-controlled quality review and saved local graph queries, case playbooks, local lead registers, secure operator lifecycle management, structured field work queues and evidence intake, truthful device assurance, and release assurance.
 
 > CrimeGraph remains an **offline, analyst-controlled case-intelligence application**. It records attributable observations and evidence provenance; it does not perform automated person-level risk scoring or opaque predictions.
 
@@ -31,6 +31,14 @@ A field operator sees pending, approved, or returned state in the graph workspac
 An administrator opens **SETTINGS** and uses **Operator lifecycle** to list locally provisioned non-administrator accounts. Disablement and reinstatement require a reason; PIN resets and role changes revoke biometric sign-in. Every lifecycle action requires high-risk confirmation and creates a hash-linked audit entry. A disabled account cannot use PIN or biometric sign-in.
 
 An administrator, supervisor, or analyst uses **ASSIGN FIELD** on an active operation in **HOME**. They select an active field operator and may add an assignment note. The field operator’s HOME screen then becomes a local work queue showing only active assigned operations and their notes. Removing an assignment requires a reason, is audited, and prevents that field account from loading the operation. Assignments remain local to the encrypted device; they do not transfer case intelligence.
+
+## Evidence derivative ledger and saved local queries
+
+The **Derivative and annotation ledger** appears within an evidence record’s detail panel. Administrators, supervisors, and analysts can add an operator-authored `annotation`, `transcript excerpt`, `review note`, or `redaction instruction`. Each record is tied to the parent evidence node, the stated provenance fingerprint, and source attachment digest; it receives a canonical SHA-256 record digest and a hash-ledger audit entry. It **does not modify** the original evidence attachment, evidence provenance, or source digest. A redaction instruction is only an auditable instruction; it does not render, transform, or automatically redact media.
+
+Forensic dossiers are now schema version 2 and include the derivative ledger in signed content. Dossier export may omit derivative annotation text under the `derivative_annotations` redaction profile while retaining an explicit redacted record. Verified legacy schema-version-1 dossiers remain accepted. On verified v2 import, a ledger record is admitted only when it maps to an accepted imported evidence item; it retains the stated source-provenance fingerprint and receives a new local record digest.
+
+The **Saved local queries** workbench is available from **Analysis** to administrators, supervisors, and analysts. A saved query contains an explicit name, optional text filter, optional entity-type filters, and an explicit choice to include directly connected relationships. Each run displays why every result matched—such as metadata containing the text filter or a relationship directly connected to a matched entity. Results are local and ephemeral; the app saves the filters, not any inferred conclusion, score, or automatic decision.
 
 ## Case playbook and local lead register
 
@@ -70,6 +78,8 @@ Administrators and supervisors can open **SETTINGS → Device assurance**. The p
 | Controlled dossier | Dossiers are user-mediated files with manifest, signature/verification state, redaction profile, stated purpose, recipient description, and disclosure record. | Treat any failed import verification as a hard stop and retain the source file for approved incident handling. |
 | Case playbook | Managers record bounded local milestones, blockers, completion notes, and accountable role. | Milestone cues record work state only. Do not use them to rank personnel, forecast case outcomes, or generate automatic task escalation. |
 | Local lead register | Leads retain source, sensitivity, status, disposition, and deliberate promotion history. | A promoted lead remains a source-bound local record; promotion must be audited and is never an automatic source-validation decision. |
+| Evidence derivative ledger | Operator-authored annotations and instructions retain a parent evidence reference, stated provenance fingerprint, source digest, canonical record digest, and audit event. | Treat entries as analyst context, not source evidence. Do not alter the original media or imply that a redaction instruction performed a redaction. |
+| Saved local queries | Only explicit text, type, and relationship filters are saved; every run explains why a record matched. | Do not add opaque ranking, automatic entity merge, person-level scoring, external lookup, or background query transfer. |
 
 ## Required routine checks
 
@@ -80,6 +90,7 @@ Administrators and supervisors can open **SETTINGS → Device assurance**. The p
 | After supervisory workflow exercise | Supervisor or auditor | Open the audit ledger and verify the hash chain. | Valid chain plus decision / correction entries. |
 | Before any authorized disclosure | Analyst, supervisor, or administrator | Verify the dossier manifest, redaction profile, stated purpose, recipient, authorization reference where applicable, and disclosure-register record. | Verified dossier and disclosure-register entry; no background or mesh transfer. |
 | After a case-planning or lead-review exercise | Supervisor or auditor | Verify playbook and lead lifecycle entries in the audit ledger, including any promotion into intelligence. | Valid chain plus milestone, disposition, and promotion entries; source remains identifiable in the promoted node metadata. |
+| Before a derivative or saved-query workflow is relied upon | Analyst or supervisor | Verify the parent evidence provenance, ledger record digest, query filters, displayed result reasons, and associated audit entries. | Original media remains unchanged; the evidence-linked ledger and query explanation remain locally traceable. |
 | After application upgrade | Technical owner | Verify Android backup controls, native plugin registry, key creation/reopen, encrypted evidence preview, device assurance output, and legacy attachment migration. | Release-readiness record updated with results. |
 
 ## Release commands
@@ -96,7 +107,7 @@ Continuous integration pins the Capacitor 8 release toolchain to Node 22, Java 2
 
 ## Guardrails for future changes
 
-New collaboration transports, including Bluetooth or mesh case transfer, must remain disabled until a complete authenticated secure-session protocol has been designed, threat-modelled, implemented, and independently reviewed. Do not make review status, quality findings, task status, lead status, milestone state, or markings into an automated decision or a proxy for person-level assessment. Any future schema change must remain additive or include a tested encrypted-storage migration path. Do not alter templates to pre-fill evidential conclusions or change device assurance wording to infer hardware capability that Android does not report.
+New collaboration transports, including Bluetooth or mesh case transfer, must remain disabled until a complete authenticated secure-session protocol has been designed, threat-modelled, implemented, and independently reviewed. Do not make review status, quality findings, task status, lead status, milestone state, derivative record, saved query, or markings into an automated decision or a proxy for person-level assessment. Any future schema change must remain additive or include a tested encrypted-storage migration path. Do not alter templates to pre-fill evidential conclusions, convert a redaction instruction into automatic media editing, or change device assurance wording to infer hardware capability that Android does not report.
 
 ## References
 

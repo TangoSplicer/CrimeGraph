@@ -77,7 +77,7 @@ beforeEach(() => {
   mocks.appendAuditEntry.mockResolvedValue(undefined);
   useCaseStore.setState({
     cases: [], activeCaseId: null, graphElements: [], auditLogs: [], auditVerification: null,
-    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], playbookMilestones: [], caseLeads: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
+    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], playbookMilestones: [], caseLeads: [], evidenceDerivatives: [], savedGraphQueries: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
   });
 });
 
@@ -221,6 +221,59 @@ describe('case assignment and field work queue', () => {
   });
 });
 
+
+describe('evidence derivative ledger', () => {
+  it('records a source-bound annotation with an integrity digest and audit entry', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1', node_id: 'node-evidence-1', fingerprint: 'source-fingerprint', attachment_digest: 'A'.repeat(64) }] })
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1' }] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().addEvidenceDerivative('node-evidence-1', 'annotation', 'Review marker', 'Operator-authored context.', 4, 8.5);
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO evidence_derivatives (id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^derivative_/), 'case-1', 'node-evidence-1', 'source-fingerprint', 'A'.repeat(64), 'annotation', 'Review marker', 'Operator-authored context.', 4, 8.5, expect.stringMatching(/^[a-f0-9]{64}$/), 'SUP-001', expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'ADD_EVIDENCE_DERIVATIVE', expect.stringMatching(/^derivative_/), expect.stringContaining('Review marker'), 'SUP-001');
+  });
+
+  it('rejects a field account before a derivative source can be read', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().addEvidenceDerivative('node-evidence-1', 'annotation', 'Review marker', 'Operator-authored context.')).rejects.toThrow('intelligence:update');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('saved local graph queries', () => {
+  it('stores explicit local filters and records the save in the audit ledger', async () => {
+    const db = makeDb();
+    db.query.mockResolvedValue({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().saveGraphQuery('case-1', 'Handset review', '900123', ['phone'], true);
+
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO saved_graph_queries (id, case_id, name, query_text, node_types, include_relationships, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^query_/), 'case-1', 'Handset review', '900123', JSON.stringify(['phone']), 1, 'SUP-001', expect.any(String), expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'SAVE_LOCAL_GRAPH_QUERY', expect.stringMatching(/^query_/), expect.stringContaining('Handset review'), 'SUP-001');
+  });
+
+  it('rejects a field account before a saved-query storage operation', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().saveGraphQuery('case-1', 'Handset review', '900123', ['phone'], true)).rejects.toThrow('intelligence:update');
+    expect(db.run).not.toHaveBeenCalled();
+  });
+});
 
 describe('case playbook and local lead register', () => {
   it('creates an accountable case milestone and writes a ledger record', async () => {

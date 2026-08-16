@@ -146,3 +146,75 @@ export function buildGraphInsights(elements: GraphElement[], notes: IntelNote[])
     qualityFindings,
   };
 }
+
+export interface LocalGraphQueryDefinition {
+  queryText: string;
+  nodeTypes: string[];
+  includeRelationships: boolean;
+}
+
+export interface ExplainableGraphQueryResult extends CaseSearchResult {
+  reasons: string[];
+}
+
+const nodeQueryReasons = (node: GraphElement, needle: string): string[] => {
+  if (!needle) return [];
+  const data = node.data;
+  const reasons: string[] = [];
+  if (normaliseSearch(data.label).includes(needle)) reasons.push('entity label contains the saved text filter');
+  if (normaliseSearch(data.type).includes(needle)) reasons.push('entity type contains the saved text filter');
+  if (normaliseSearch(data.occurred_at).includes(needle)) reasons.push('observed time contains the saved text filter');
+  if (Object.entries(data.attributes || {}).some(([key, value]) => normaliseSearch(`${key} ${value}`).includes(needle))) reasons.push('entity metadata contains the saved text filter');
+  const evidence = data.evidence;
+  if (evidence && normaliseSearch([evidence.exhibitNumber, evidence.sourceReference, evidence.sourceType, evidence.handlingStatus, evidence.verificationStatus, evidence.attachmentName].join(' ')).includes(needle)) {
+    reasons.push('evidence provenance contains the saved text filter');
+  }
+  return reasons;
+};
+
+export const runExplainableLocalGraphQuery = (elements: GraphElement[], definition: LocalGraphQueryDefinition): ExplainableGraphQueryResult[] => {
+  const needle = normaliseSearch(definition.queryText);
+  const nodeTypes = [...new Set(definition.nodeTypes.map(normaliseSearch).filter(Boolean))];
+  if (needle.length > 0 && needle.length < 2) throw new Error('Saved query text must contain at least two characters.');
+  if (!needle && nodeTypes.length === 0) throw new Error('Saved query requires text or at least one entity type filter.');
+  const nodes = elements.filter((element) => !element.data.source && !element.data.target);
+  const edges = elements.filter((element) => Boolean(element.data.source && element.data.target));
+  const nodeById = new Map(nodes.map((node) => [node.data.id, node]));
+  const matchingNodes = nodes.filter((node) => {
+    const typeMatches = nodeTypes.length === 0 || nodeTypes.includes(normaliseSearch(node.data.type));
+    const textMatches = !needle || nodeQueryReasons(node, needle).length > 0;
+    return typeMatches && textMatches;
+  });
+  const matchingNodeIds = new Set(matchingNodes.map((node) => node.data.id));
+  const results: ExplainableGraphQueryResult[] = matchingNodes.map((node) => {
+    const reasons = [
+      ...(nodeTypes.length ? [`entity type is within saved filter: ${nodeTypes.join(', ')}`] : []),
+      ...nodeQueryReasons(node, needle),
+    ];
+    return {
+      id: node.data.id,
+      kind: 'node',
+      title: node.data.label,
+      summary: `${node.data.type || 'entity'} · ${node.data.occurred_at ? new Date(node.data.occurred_at).toLocaleString() : 'no observed time'}`,
+      reasons: reasons.length ? reasons : ['entity type satisfies the saved filter'],
+    };
+  });
+
+  if (definition.includeRelationships) {
+    edges.forEach((edge) => {
+      const sourceId = edge.data.source || '';
+      const targetId = edge.data.target || '';
+      const source = nodeById.get(sourceId)?.data.label || sourceId || 'Unknown';
+      const target = nodeById.get(targetId)?.data.label || targetId || 'Unknown';
+      const labelMatches = Boolean(needle && normaliseSearch(`${edge.data.label} ${source} ${target}`).includes(needle));
+      const joinsMatch = matchingNodeIds.has(sourceId) || matchingNodeIds.has(targetId);
+      if (!labelMatches && !joinsMatch) return;
+      const reasons = [
+        ...(joinsMatch ? ['relationship is directly connected to an entity matched by this saved query'] : []),
+        ...(labelMatches ? ['relationship label or endpoint contains the saved text filter'] : []),
+      ];
+      results.push({ id: edge.data.id, kind: 'relationship', title: edge.data.label || 'Relationship', summary: `${source} → ${target}`, reasons });
+    });
+  }
+  return results.sort((left, right) => left.kind.localeCompare(right.kind) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
+};

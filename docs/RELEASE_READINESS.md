@@ -1,6 +1,6 @@
 # CrimeGraph Release Readiness Record
 
-**Scope:** Device-bound encrypted storage, controlled forensic dossiers and disclosure records, explainable quality review, case playbooks, local lead registers, structured field work cards and evidence intake, device posture, supervisory review, secure operator lifecycle, and Capacitor 8 Android release assurance.
+**Scope:** Device-bound encrypted storage, evidence derivative and annotation ledger, controlled forensic dossiers and disclosure records, explainable quality review and saved local graph queries, case playbooks, local lead registers, structured field work cards and evidence intake, device posture, supervisory review, secure operator lifecycle, and Capacitor 8 Android release assurance.
 
 **Baseline branch:** `main`
 
@@ -13,7 +13,7 @@
 | Control area | Required evidence | Current release interpretation |
 |---|---|---|
 | Type safety and production bundle | `npm run verify` | Blocks release on TypeScript, unit-test, or production-build failure. |
-| Security and workflow suite | `npm run test` | Covers encrypted media, storage-secret format, high-risk confirmation, secure wipe, hostile import bounds, forensic dossier tamper detection, controlled markings, explainable quality findings, supervisory review, operator lifecycle, field task access closure, assignment visibility, case-playbook lifecycle, and source-bound local-lead promotion. |
+| Security and workflow suite | `npm run test` | Covers encrypted media, storage-secret format, high-risk confirmation, secure wipe, hostile import bounds, forensic dossier v1/v2 integrity and ledger tamper detection, controlled markings, explainable quality findings and saved-query reasons, supervisory review, operator lifecycle, field task access closure, assignment visibility, case-playbook lifecycle, and source-bound local-lead promotion. |
 | Production dependency surface | `npm audit --omit=dev --audit-level=high` | Blocks release on a production high or critical advisory. |
 | Native bridge synchronization | `npm run sync:android` | Confirms Capacitor 8 Android assets and registered native plugins are synchronized. |
 | Native debug compilation | GitHub **CrimeGraph Android Build** workflow | Builds a debug APK from the synchronized project on API 36 with Java 21. |
@@ -35,7 +35,7 @@ The Android workflow runs on pushes and pull requests targeting `main` and `mast
 
 ## Mandatory device acceptance
 
-Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACCEPTANCE.md) before authorizing distribution. Its mandatory checks include encrypted first-run commissioning, restart persistence, secure operator lifecycle actions, assigned field queues and task cards, case-playbook and local-lead controls, guided evidence intake and protected camera capture, forensic dossier integrity, review/resubmission, session locks, verified pairing, secure wipe, backup/transfer exclusion, and the native device assurance report.
+Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACCEPTANCE.md) before authorizing distribution. Its mandatory checks include encrypted first-run commissioning, restart persistence, secure operator lifecycle actions, assigned field queues and task cards, case-playbook and local-lead controls, source-preserving evidence-derivative records, explainable saved local graph queries, guided evidence intake and protected camera capture, forensic dossier integrity, review/resubmission, session locks, verified pairing, secure wipe, backup/transfer exclusion, and the native device assurance report.
 
 | Minimum required evidence | Required result |
 |---|---|
@@ -47,6 +47,8 @@ Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACC
 | Field execution | Structured task cards are limited to the active field assignee, with completion and inability handoff audited. |
 | Case workflow | Playbook milestones record objective, owner role, blocker/completion notes, and audited state transitions. Local leads retain source and sensitivity facts; field accounts may create only assigned-case leads and cannot dispose or promote them. |
 | Lead promotion | Manager-initiated promotion creates a linked intelligence node with stated lead-source metadata and hash-ledger evidence; no automatic validation, scoring, or transfer occurs. |
+| Evidence derivative ledger | Operator-authored records remain parent-evidence-bound, hash-digested, audited, and non-destructive; signed v2 dossiers include them and verify legacy v1 dossiers. |
+| Saved local graph queries | Stored filters, locally rendered match explanations, role gating, and no score/ranking/external lookup are confirmed. |
 | Device assurance | Installed Android reporting is checked for actual key-security-level wording, storage-secret status, backup exclusion, biometric readiness, storage warning, protected-media count, last database open, and audit-chain state. |
 | Secure wipe | Protected local data and device-held storage secret cannot be reopened after the confirmed test wipe. |
 
@@ -62,7 +64,7 @@ The release owner must follow the [controlled Android release procedure](./RELEA
 | Automated checks | `npm run verify` and `npm audit --omit=dev --audit-level=high` pass from a clean dependency installation. |
 | Native CI | The Android workflow produces the debug APK artifact successfully for the release commit. |
 | Device assurance | Every mandatory acceptance test passes, or an approved non-blocking exception is documented. |
-| Security review | The audit ledger verifies after lifecycle, assignment, task handoff, field evidence, case-playbook/lead exercises, controlled dossier, and supervisory review exercises. |
+| Security review | The audit ledger verifies after lifecycle, assignment, task handoff, field evidence, derivative/annotation creation, saved-query lifecycle, case-playbook/lead exercises, controlled dossier, and supervisory review exercises. |
 | Truthful assurance | Device assurance must identify unavailable or OS-undifferentiated hardware protection as such; it must not claim StrongBox or TEE without an Android-reported security level. |
 | Signing | The release artifact is produced in an approved protected environment with no secrets committed or logged. |
 | Distribution | A named release owner approves the versioned artifact and target channel. |

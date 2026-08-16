@@ -8,6 +8,7 @@ import { decryptPackage, encryptPackage } from '../capacitor/crypto';
 import { getDeviceIdentity, signWithDeviceIdentity, verifyDeviceSignature } from '../capacitor/deviceIdentity';
 import { buildForensicDossier, verifyForensicDossier, type DossierDisclosure, type DossierRedactionProfile } from '../utils/forensicDossier';
 import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
+import { createEvidenceDerivativeDigest, normaliseDerivativeRecord, type EvidenceDerivativeType } from '../utils/evidenceDerivative';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
 import { assertPermission, can } from '../utils/permissions';
@@ -32,6 +33,8 @@ export type PlaybookOwnerRole = 'admin' | 'supervisor' | 'analyst' | 'field';
 export interface CasePlaybookMilestone { id: string; caseId: string; title: string; objective: string; category: string; ownerRole: PlaybookOwnerRole; status: PlaybookMilestoneStatus; dueAt: string | null; linkedObjectIds: string[]; blockerReason: string; completionNote: string; createdBy: string; createdAt: string; updatedBy: string; updatedAt: string; completedBy: string | null; completedAt: string | null; }
 export type CaseLeadStatus = 'new' | 'under_review' | 'actioned' | 'closed' | 'promoted';
 export interface CaseLead { id: string; caseId: string; title: string; summary: string; sourceType: string; sourceReference: string; receivedAt: string; sensitivityMarking: string; status: CaseLeadStatus; dispositionNote: string; promotedNodeId: string | null; promotedBy: string | null; promotedAt: string | null; createdBy: string; createdAt: string; updatedBy: string; updatedAt: string; }
+export interface EvidenceDerivative { id: string; caseId: string; parentNodeId: string; parentEvidenceFingerprint: string; sourceAttachmentDigest: string; recordType: EvidenceDerivativeType; label: string; annotationText: string; timecodeStartSeconds: number | null; timecodeEndSeconds: number | null; recordDigest: string; createdBy: string; createdAt: string; }
+export interface SavedGraphQuery { id: string; caseId: string; name: string; queryText: string; nodeTypes: string[]; includeRelationships: boolean; createdBy: string; createdAt: string; updatedAt: string; }
 export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
 
 export interface GraphElement { data: { id: string; label: string; type?: string; source?: string; target?: string; confidence?: number; created_at?: string; occurred_at?: string | null; attributes?: Record<string, string>; evidence?: EvidenceProvenance; review_status?: ReviewStatus; submitted_by?: string | null; submitted_at?: string | null; reviewed_by?: string | null; reviewed_at?: string | null; review_notes?: string | null; }; }
@@ -53,6 +56,8 @@ interface CaseState {
   fieldTasks: FieldTask[];
   playbookMilestones: CasePlaybookMilestone[];
   caseLeads: CaseLead[];
+  evidenceDerivatives: EvidenceDerivative[];
+  savedGraphQueries: SavedGraphQuery[];
   notes: IntelNote[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
@@ -81,6 +86,11 @@ interface CaseState {
   createCaseLead: (caseId: string, title: string, summary: string, sourceType: string, sourceReference: string, sensitivityMarking?: string, receivedAt?: string) => Promise<void>;
   updateCaseLead: (leadId: string, status: Exclude<CaseLeadStatus, 'promoted'>, dispositionNote?: string) => Promise<void>;
   promoteCaseLead: (leadId: string, nodeType: string, confidence: number, attributes?: Record<string, string>, occurredAt?: string) => Promise<void>;
+  loadEvidenceDerivatives: (nodeId: string) => Promise<void>;
+  addEvidenceDerivative: (nodeId: string, recordType: EvidenceDerivativeType, label: string, annotationText: string, timecodeStartSeconds?: number | string | null, timecodeEndSeconds?: number | string | null) => Promise<void>;
+  loadSavedGraphQueries: (caseId: string) => Promise<void>;
+  saveGraphQuery: (caseId: string, name: string, queryText: string, nodeTypes: string[], includeRelationships: boolean) => Promise<void>;
+  deleteSavedGraphQuery: (queryId: string) => Promise<void>;
   loadGraphElements: (caseId: string) => Promise<void>;
   addNode: (nodeType: string, label: string, confidence: number, attributes?: Record<string, string>, evidence?: EvidenceProvenanceInput, occurredAt?: string) => Promise<string>;
   updateNode: (id: string, label: string, confidence: number, attributes: Record<string, string>, occurredAt?: string) => Promise<void>;
@@ -112,6 +122,7 @@ const MAX_IMPORT_BASE64_LENGTH = 12 * 1024 * 1024;
 const MAX_IMPORT_NODES = 2000;
 const MAX_IMPORT_EDGES = 6000;
 const MAX_IMPORT_NOTES = 2000;
+const MAX_IMPORT_DERIVATIVES = 5000;
 
 const createId = (prefix: string): string => window.crypto?.randomUUID ? `${prefix}_${window.crypto.randomUUID()}` : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 const currentOperator = (): string => useAuthStore.getState().currentUser?.badge || 'SYSTEM_UNKNOWN';
@@ -232,6 +243,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   fieldTasks: [],
   playbookMilestones: [],
   caseLeads: [],
+  evidenceDerivatives: [],
+  savedGraphQueries: [],
   notes: [],
   selectedNodeId: null,
   selectedEdgeId: null,
@@ -647,6 +660,84 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     await get().loadCaseLeads(String(lead.case_id));
   },
 
+  loadEvidenceDerivatives: async (nodeId) => {
+    const db = await getDb();
+    const parentResult = await db.query("SELECT case_id FROM nodes WHERE id = ? AND type = 'evidence' LIMIT 1", [nodeId]);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('Evidence item was not found for derivative review.');
+    await ensureCaseAccess(String(parent.case_id));
+    const response = await db.query('SELECT * FROM evidence_derivatives WHERE parent_node_id = ? ORDER BY created_at DESC', [nodeId]);
+    set({ evidenceDerivatives: (response.values || []).map((record: any): EvidenceDerivative => ({
+      id: String(record.id), caseId: String(record.case_id), parentNodeId: String(record.parent_node_id), parentEvidenceFingerprint: String(record.parent_evidence_fingerprint), sourceAttachmentDigest: String(record.source_attachment_digest || ''),
+      recordType: record.record_type as EvidenceDerivativeType, label: String(record.label), annotationText: String(record.annotation_text), timecodeStartSeconds: record.timecode_start_seconds === null || record.timecode_start_seconds === undefined ? null : Number(record.timecode_start_seconds),
+      timecodeEndSeconds: record.timecode_end_seconds === null || record.timecode_end_seconds === undefined ? null : Number(record.timecode_end_seconds), recordDigest: String(record.record_digest), createdBy: String(record.created_by), createdAt: String(record.created_at),
+    })) });
+  },
+
+  addEvidenceDerivative: async (nodeId, recordType, label, annotationText, timecodeStartSeconds = null, timecodeEndSeconds = null) => {
+    assertCurrentPermission('intelligence:update');
+    const db = await getDb();
+    const parentResult = await db.query('SELECT ep.case_id, ep.node_id, ep.fingerprint, ep.attachment_digest FROM evidence_provenance ep INNER JOIN nodes n ON n.id = ep.node_id WHERE ep.node_id = ? AND n.type = ? LIMIT 1', [nodeId, 'evidence']);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('A recorded evidence item is required before an annotation or derivative record can be added.');
+    await ensureCaseAccess(String(parent.case_id));
+    const now = new Date().toISOString();
+    const normalised = normaliseDerivativeRecord({
+      caseId: String(parent.case_id), parentNodeId: String(parent.node_id), parentEvidenceFingerprint: String(parent.fingerprint), sourceAttachmentDigest: String(parent.attachment_digest || ''),
+      recordType, label, annotationText, timecodeStartSeconds, timecodeEndSeconds, createdBy: currentOperator(), createdAt: now,
+    });
+    const recordId = createId('derivative');
+    const recordDigest = await createEvidenceDerivativeDigest(normalised);
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO evidence_derivatives (id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [recordId, normalised.caseId, normalised.parentNodeId, normalised.parentEvidenceFingerprint, normalised.sourceAttachmentDigest || null, normalised.recordType, normalised.label, normalised.annotationText, normalised.timecodeStartSeconds, normalised.timecodeEndSeconds, recordDigest, normalised.createdBy, normalised.createdAt]);
+      await appendAuditEntry(db, 'ADD_EVIDENCE_DERIVATIVE', recordId, `Added ${normalised.recordType.replace('_', ' ')} to evidence ${normalised.parentNodeId}: ${normalised.label}`, currentOperator());
+    });
+    await get().loadEvidenceDerivatives(nodeId);
+  },
+
+  loadSavedGraphQueries: async (caseId) => {
+    await ensureCaseAccess(caseId);
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM saved_graph_queries WHERE case_id = ? ORDER BY updated_at DESC, name ASC', [caseId]);
+    set({ savedGraphQueries: (response.values || []).map((record: any): SavedGraphQuery => ({
+      id: String(record.id), caseId: String(record.case_id), name: String(record.name), queryText: String(record.query_text || ''), nodeTypes: parseLinkedNodes(record.node_types),
+      includeRelationships: Number(record.include_relationships) === 1, createdBy: String(record.created_by), createdAt: String(record.created_at), updatedAt: String(record.updated_at),
+    })) });
+  },
+
+  saveGraphQuery: async (caseId, name, queryText, nodeTypes, includeRelationships) => {
+    assertCurrentPermission('intelligence:update');
+    await ensureCaseAccess(caseId);
+    const cleanName = name.trim().slice(0, 120);
+    const cleanText = queryText.trim().slice(0, 240);
+    const cleanTypes = [...new Set(nodeTypes.map((type) => type.trim().toLowerCase()).filter((type) => ENTITY_TYPES.has(type)))].slice(0, ENTITY_TYPES.size);
+    if (cleanName.length < 3) throw new Error('Saved query name must contain at least three characters.');
+    if (cleanText.length > 0 && cleanText.length < 2) throw new Error('Saved query text must contain at least two characters.');
+    if (!cleanText && cleanTypes.length === 0) throw new Error('Saved query requires text or at least one entity type filter.');
+    const now = new Date().toISOString();
+    const queryId = createId('query');
+    const db = await getDb();
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO saved_graph_queries (id, case_id, name, query_text, node_types, include_relationships, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [queryId, caseId, cleanName, cleanText, JSON.stringify(cleanTypes), includeRelationships ? 1 : 0, currentOperator(), now, now]);
+      await appendAuditEntry(db, 'SAVE_LOCAL_GRAPH_QUERY', queryId, `Saved local graph query: ${cleanName}`, currentOperator());
+    });
+    await get().loadSavedGraphQueries(caseId);
+  },
+
+  deleteSavedGraphQuery: async (queryId) => {
+    assertCurrentPermission('intelligence:update');
+    const db = await getDb();
+    const response = await db.query('SELECT case_id, name FROM saved_graph_queries WHERE id = ? LIMIT 1', [queryId]);
+    const query = response.values?.[0];
+    if (!query) throw new Error('Saved local query was not found.');
+    await ensureCaseAccess(String(query.case_id));
+    await withTransaction(db, async () => {
+      await db.run('DELETE FROM saved_graph_queries WHERE id = ?', [queryId]);
+      await appendAuditEntry(db, 'DELETE_LOCAL_GRAPH_QUERY', queryId, `Deleted local graph query: ${query.name}`, currentOperator());
+    });
+    set({ savedGraphQueries: get().savedGraphQueries.filter((entry) => entry.id !== queryId) });
+  },
+
   loadGraphElements: async (caseId) => {
     await ensureCaseAccess(caseId);
     const db = await getDb();
@@ -792,11 +883,12 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
+      await db.run('DELETE FROM evidence_derivatives WHERE parent_node_id = ?', [nodeId]);
       await db.run('DELETE FROM evidence_provenance WHERE node_id = ?', [nodeId]);
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
-      await appendAuditEntry(db, 'DELETE_NODE_CASCADE', nodeId, 'Deleted entity and all attached relationships', currentOperator());
+      await appendAuditEntry(db, 'DELETE_NODE_CASCADE', nodeId, 'Deleted entity, dependent evidence ledger records, and attached relationships', currentOperator());
     });
-    set({ graphElements: get().graphElements.filter((element) => element.data.id !== nodeId && element.data.source !== nodeId && element.data.target !== nodeId), selectedNodeId: null, selectedEdgeId: null });
+    set({ graphElements: get().graphElements.filter((element) => element.data.id !== nodeId && element.data.source !== nodeId && element.data.target !== nodeId), evidenceDerivatives: get().evidenceDerivatives.filter((entry) => entry.parentNodeId !== nodeId), selectedNodeId: null, selectedEdgeId: null });
   },
 
   deleteEdge: async (edgeId) => {
@@ -866,7 +958,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const recipientDescription = window.prompt('RECIPIENT: Describe the authorized recipient or destination:');
     if (!recipientDescription) return;
     const authorizationReference = window.prompt('AUTHORIZATION REFERENCE: Optional approval, warrant, or disclosure reference:') || undefined;
-    const redactionChoice = window.prompt('REDACTION PROFILE: Enter comma-separated values from notes, attachment_paths, observer_identity, observed_time; leave blank for none:') || '';
+    const redactionChoice = window.prompt('REDACTION PROFILE: Enter comma-separated values from notes, derivative_annotations, attachment_paths, observer_identity, observed_time; leave blank for none:') || '';
     const omitted = redactionChoice.split(',').map((value) => value.trim()).filter(Boolean) as DossierRedactionProfile['omitted'];
     const rationale = omitted.length > 0 ? window.prompt('REDACTION RATIONALE: Explain why these fields are omitted:') || '' : '';
     if (activeCase.classification !== 'OFFICIAL') await requireHighRiskReauthentication('Confirm restricted forensic dossier export');
@@ -878,6 +970,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     if (!auditVerification.valid) throw new Error('The audit ledger must verify before a forensic dossier can be exported.');
     const auditHeadHash = auditEntries.length ? String(auditEntries[auditEntries.length - 1].entry_hash || '') || null : null;
     const markingsResponse = await db.query('SELECT object_type, object_id, marking, handling_instructions, created_by, created_at FROM data_markings WHERE case_id = ? ORDER BY object_type, object_id, marking', [activeCaseId]);
+    const derivativesResponse = await db.query('SELECT id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at FROM evidence_derivatives WHERE case_id = ? ORDER BY created_at, id', [activeCaseId]);
     const now = new Date().toISOString();
     const dossierId = createId('dossier');
     const identity = await getDeviceIdentity();
@@ -900,6 +993,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         relationships: graphElements.filter((element) => Boolean(element.data.source)),
         notes,
         markings: markingsResponse.values || [],
+        derivatives: derivativesResponse.values || [],
       },
     });
     const dossierVerification = await verifyForensicDossier(dossier);
@@ -970,6 +1064,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         [newCaseId, importedReference, `${parsed.title} (Imported)`.slice(0, 160), 'other', 'active', parsed.classification, now, now, now],
       );
       const idMap = new Map<string, string>();
+      const importedEvidenceBySourceNode = new Map<string, { nodeId: string; attachmentDigest: string }>();
       for (const node of parsed.nodes) {
         const data = readElementData(node);
         if (!data || typeof data.id !== 'string' || typeof data.label !== 'string' || !ENTITY_TYPES.has(String(data.type))) continue;
@@ -986,6 +1081,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           const provenanceId = createId('evidence');
           const createdAt = typeof (data.evidence as Record<string, unknown>).createdAt === 'string' ? String((data.evidence as Record<string, unknown>).createdAt).slice(0, 40) : now;
           const updatedAt = typeof (data.evidence as Record<string, unknown>).updatedAt === 'string' ? String((data.evidence as Record<string, unknown>).updatedAt).slice(0, 40) : now;
+          const importedFingerprint = await createEvidenceFingerprint(importedEvidence);
           await db.run(
             `INSERT INTO evidence_provenance (id, case_id, node_id, exhibit_number, source_type, source_reference, acquired_at, acquired_by, handling_status, verification_status, chain_of_custody, fingerprint, attachment_name, attachment_uri, attachment_mime_type, attachment_digest, created_at, updated_at, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -993,11 +1089,12 @@ export const useCaseStore = create<CaseState>((set, get) => ({
               provenanceId, newCaseId, newNodeId, importedEvidence.exhibitNumber, importedEvidence.sourceType,
               importedEvidence.sourceReference, importedEvidence.acquiredAt, importedEvidence.acquiredBy,
               importedEvidence.handlingStatus, importedEvidence.verificationStatus, importedEvidence.chainOfCustody,
-              await createEvidenceFingerprint(importedEvidence), importedEvidence.attachmentName, importedEvidence.attachmentUri,
+              importedFingerprint, importedEvidence.attachmentName, importedEvidence.attachmentUri,
               importedEvidence.attachmentMimeType, importedEvidence.attachmentDigest, createdAt, updatedAt,
               typeof (data.evidence as Record<string, unknown>).createdBy === 'string' ? String((data.evidence as Record<string, unknown>).createdBy).slice(0, 120) : 'IMPORTED_PACKAGE',
             ],
           );
+          importedEvidenceBySourceNode.set(data.id, { nodeId: newNodeId, attachmentDigest: importedEvidence.attachmentDigest });
         }
       }
       for (const relationship of parsed.relationships) {
@@ -1022,6 +1119,23 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           'INSERT INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)',
           [createId('note'), newCaseId, content, JSON.stringify(linkedNodeIds), typeof candidate.created_at === 'string' ? candidate.created_at.slice(0, 40) : now],
         );
+      }
+      const dossierDerivatives = isForensicDossier && decoded?.schema_version === 2 && Array.isArray(decoded?.content?.derivatives) ? decoded.content.derivatives.slice(0, MAX_IMPORT_DERIVATIVES) : [];
+      for (const derivative of dossierDerivatives) {
+        if (!derivative || typeof derivative !== 'object') throw new Error('Verified dossier contains an invalid derivative record.');
+        const candidate = derivative as Record<string, unknown>;
+        const sourceNodeId = typeof candidate.parent_node_id === 'string' ? candidate.parent_node_id : '';
+        const parent = importedEvidenceBySourceNode.get(sourceNodeId);
+        if (!parent || typeof candidate.parent_evidence_fingerprint !== 'string' || typeof candidate.record_type !== 'string' || typeof candidate.label !== 'string' || typeof candidate.annotation_text !== 'string') {
+          throw new Error('Verified dossier derivative does not map to an accepted evidence item.');
+        }
+        const createdAt = typeof candidate.created_at === 'string' && !Number.isNaN(Date.parse(candidate.created_at)) ? candidate.created_at.slice(0, 40) : now;
+        const createdBy = typeof candidate.created_by === 'string' ? candidate.created_by.slice(0, 120) : 'IMPORTED_PACKAGE';
+        const normalised = normaliseDerivativeRecord({
+          caseId: newCaseId, parentNodeId: parent.nodeId, parentEvidenceFingerprint: candidate.parent_evidence_fingerprint, sourceAttachmentDigest: typeof candidate.source_attachment_digest === 'string' ? candidate.source_attachment_digest : parent.attachmentDigest,
+          recordType: candidate.record_type as EvidenceDerivativeType, label: candidate.label, annotationText: candidate.annotation_text, timecodeStartSeconds: candidate.timecode_start_seconds, timecodeEndSeconds: candidate.timecode_end_seconds, createdBy, createdAt,
+        });
+        await db.run('INSERT INTO evidence_derivatives (id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [createId('derivative'), normalised.caseId, normalised.parentNodeId, normalised.parentEvidenceFingerprint, normalised.sourceAttachmentDigest || null, normalised.recordType, normalised.label, normalised.annotationText, normalised.timecodeStartSeconds, normalised.timecodeEndSeconds, await createEvidenceDerivativeDigest(normalised), normalised.createdBy, normalised.createdAt]);
       }
       await appendAuditEntry(db, isForensicDossier ? 'IMPORT_VERIFIED_DOSSIER' : 'IMPORT_CASE', newCaseId, isForensicDossier ? `Imported verified forensic dossier ${parsed.reference} signed by ${dossierVerification.signerFingerprint}` : `Imported encrypted package ${parsed.reference}`, currentOperator());
     });

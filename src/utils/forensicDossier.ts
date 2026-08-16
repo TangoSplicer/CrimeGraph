@@ -1,4 +1,4 @@
-export type RedactionOption = 'notes' | 'attachment_paths' | 'observer_identity' | 'observed_time';
+export type RedactionOption = 'notes' | 'attachment_paths' | 'observer_identity' | 'observed_time' | 'derivative_annotations';
 
 export interface DossierRedactionProfile {
   omitted: RedactionOption[];
@@ -17,13 +17,14 @@ export interface DossierIntegrity {
   relationships: string;
   notes: string;
   markings: string;
+  derivatives?: string;
   content: string;
   manifest: string;
 }
 
 export interface ForensicDossier {
   dossier_type: 'crimegraph-forensic-dossier';
-  schema_version: 1;
+  schema_version: 1 | 2;
   manifest: {
     dossier_id: string;
     case_id: string;
@@ -52,6 +53,7 @@ export interface ForensicDossier {
     relationships: unknown[];
     notes: unknown[];
     markings: unknown[];
+    derivatives?: unknown[];
   };
 }
 
@@ -73,6 +75,7 @@ export interface DossierBuildInput {
     relationships: unknown[];
     notes: unknown[];
     markings: unknown[];
+    derivatives?: unknown[];
   };
 }
 
@@ -101,7 +104,7 @@ export const sha256Hex = async (value: unknown): Promise<string> => {
 };
 
 const ensureValidProfile = (profile: DossierRedactionProfile): DossierRedactionProfile => {
-  const allowed = new Set<RedactionOption>(['notes', 'attachment_paths', 'observer_identity', 'observed_time']);
+  const allowed = new Set<RedactionOption>(['notes', 'attachment_paths', 'observer_identity', 'observed_time', 'derivative_annotations']);
   const omitted = [...new Set(profile.omitted)].filter((entry): entry is RedactionOption => allowed.has(entry));
   const rationale = profile.rationale.trim().slice(0, 500);
   if (omitted.length > 0 && rationale.length < 5) throw new Error('A redaction rationale of at least five characters is required.');
@@ -149,6 +152,15 @@ const redactNote = (candidate: unknown, profile: DossierRedactionProfile): unkno
   return redacted;
 };
 
+const redactDerivative = (candidate: unknown, profile: DossierRedactionProfile): unknown => {
+  if (!profile.omitted.includes('derivative_annotations')) return candidate;
+  if (!isPlainObject(candidate)) return candidate;
+  const redacted = { ...candidate };
+  delete redacted.annotation_text;
+  redacted.redacted = true;
+  return redacted;
+};
+
 export const buildForensicDossier = async (input: DossierBuildInput): Promise<ForensicDossier> => {
   const redactionProfile = ensureValidProfile(input.redactionProfile);
   const disclosure = ensureDisclosure(input.disclosure);
@@ -158,6 +170,7 @@ export const buildForensicDossier = async (input: DossierBuildInput): Promise<Fo
     relationships: structuredClone(input.content.relationships),
     notes: input.content.notes.map((note) => redactNote(note, redactionProfile)),
     markings: structuredClone(input.content.markings),
+    derivatives: (input.content.derivatives || []).map((derivative) => redactDerivative(derivative, redactionProfile)),
   };
   const integrityWithoutManifest = {
     case: await sha256Hex(content.case),
@@ -165,6 +178,7 @@ export const buildForensicDossier = async (input: DossierBuildInput): Promise<Fo
     relationships: await sha256Hex(content.relationships),
     notes: await sha256Hex(content.notes),
     markings: await sha256Hex(content.markings),
+    derivatives: await sha256Hex(content.derivatives),
     content: await sha256Hex(content),
   };
   const unsignedManifest = {
@@ -192,7 +206,7 @@ export const buildForensicDossier = async (input: DossierBuildInput): Promise<Fo
   const signature = await input.signer.sign(manifestDigest);
   return {
     dossier_type: 'crimegraph-forensic-dossier',
-    schema_version: 1,
+    schema_version: 2,
     manifest: {
       ...unsignedManifest,
       signer: { ...unsignedManifest.signer, signature },
@@ -204,7 +218,7 @@ export const buildForensicDossier = async (input: DossierBuildInput): Promise<Fo
 
 export const verifyForensicDossier = async (candidate: unknown): Promise<DossierVerificationResult> => {
   const errors: string[] = [];
-  if (!isPlainObject(candidate) || candidate.dossier_type !== 'crimegraph-forensic-dossier' || candidate.schema_version !== 1) {
+  if (!isPlainObject(candidate) || candidate.dossier_type !== 'crimegraph-forensic-dossier' || (candidate.schema_version !== 1 && candidate.schema_version !== 2)) {
     return { valid: false, errors: ['Package is not a supported forensic dossier.'], manifestDigest: null, signerFingerprint: null };
   }
   const manifest = candidate.manifest;
@@ -214,8 +228,13 @@ export const verifyForensicDossier = async (candidate: unknown): Promise<Dossier
   }
   const integrity = manifest.integrity as Record<string, unknown>;
   const expectedParts: Array<[keyof Omit<DossierIntegrity, 'manifest'>, unknown]> = [
-    ['case', content.case], ['nodes', content.nodes], ['relationships', content.relationships], ['notes', content.notes], ['markings', content.markings], ['content', content],
+    ['case', content.case], ['nodes', content.nodes], ['relationships', content.relationships], ['notes', content.notes], ['markings', content.markings],
   ];
+  if (candidate.schema_version === 2) {
+    if (!Array.isArray(content.derivatives)) errors.push('Forensic dossier v2 is missing derivative ledger content.');
+    else expectedParts.push(['derivatives', content.derivatives]);
+  }
+  expectedParts.push(['content', content]);
   for (const [name, value] of expectedParts) {
     const actual = await sha256Hex(value);
     if (integrity[name] !== actual) errors.push(`Integrity mismatch for ${name}.`);

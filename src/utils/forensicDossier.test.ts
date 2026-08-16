@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildForensicDossier, verifyForensicDossier } from './forensicDossier';
+import { buildForensicDossier, sha256Hex, verifyForensicDossier } from './forensicDossier';
 
 beforeEach(() => {
   Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
@@ -23,6 +23,7 @@ const buildFixture = async () => buildForensicDossier({
     relationships: [],
     notes: [{ id: 'note-001', content: 'Sensitive note', linked_nodes: ['node-001'] }],
     markings: [{ object_type: 'node', object_id: 'node-001', marking: 'SENSITIVE' }],
+    derivatives: [{ id: 'derivative-001', parent_node_id: 'node-001', parent_evidence_fingerprint: 'fingerprint', source_attachment_digest: 'digest', record_type: 'annotation', label: 'Review point', annotation_text: 'Operator-authored context', record_digest: 'ledger-digest', created_by: 'ANALYST-001', created_at: '2026-08-15T12:00:00.000Z' }],
   },
 });
 
@@ -31,6 +32,7 @@ describe('forensic dossier integrity', () => {
     const dossier = await buildFixture();
     const verification = await verifyForensicDossier(dossier);
 
+    expect(dossier.schema_version).toBe(2);
     expect(dossier.manifest.integrity.manifest).toMatch(/^[a-f0-9]{64}$/);
     expect(dossier.manifest.signer.signature).toBe(`signature:${dossier.manifest.integrity.manifest}`);
     expect(verification).toMatchObject({ valid: true, errors: [], manifestDigest: dossier.manifest.integrity.manifest, signerFingerprint: 'fingerprint-001' });
@@ -47,6 +49,47 @@ describe('forensic dossier integrity', () => {
     expect(evidence.createdBy).toBeUndefined();
     expect(evidence.attachmentUri).toBeUndefined();
     expect(evidence.attachmentDigest).toBe('digest');
+  });
+
+  it('continues to verify a structurally valid legacy v1 dossier without a derivative ledger', async () => {
+    const v2 = await buildFixture();
+    const legacy = structuredClone(v2) as any;
+    legacy.schema_version = 1;
+    delete legacy.content.derivatives;
+    delete legacy.manifest.integrity.derivatives;
+    legacy.manifest.integrity.content = await sha256Hex(legacy.content);
+    const { signature: _signature, ...signer } = legacy.manifest.signer;
+    const { manifest: _manifest, ...integrity } = legacy.manifest.integrity;
+    legacy.manifest.integrity.manifest = await sha256Hex({
+      dossier_id: legacy.manifest.dossier_id, case_id: legacy.manifest.case_id, reference: legacy.manifest.reference, title: legacy.manifest.title,
+      classification: legacy.manifest.classification, exported_at: legacy.manifest.exported_at, exported_by: legacy.manifest.exported_by,
+      redaction_profile: legacy.manifest.redaction_profile, disclosure: legacy.manifest.disclosure, audit: legacy.manifest.audit, signer, integrity,
+    });
+
+    await expect(verifyForensicDossier(legacy)).resolves.toMatchObject({ valid: true, errors: [] });
+  });
+
+  it('redacts derivative annotation text only in the dossier projection when selected', async () => {
+    const dossier = await buildForensicDossier({
+      ...(await (async () => ({
+        dossierId: 'dossier-derivative-redaction', caseId: 'case-001', reference: 'CASE-001', title: 'Test Operation', classification: 'OFFICIAL', exportedAt: '2026-08-15T12:00:00.000Z', exportedBy: 'ANALYST-001',
+        disclosure: { purpose: 'Authorized review', recipientDescription: 'Reviewer' }, audit: { chainValid: true, verifiedEntries: 1, auditHeadHash: null }, signer: { fingerprint: 'fingerprint', publicKey: 'key', sign: async () => 'signature' },
+        content: { case: {}, nodes: [], relationships: [], notes: [], markings: [], derivatives: [{ id: 'derivative-001', annotation_text: 'Sensitive annotation' }] },
+      }))()),
+      redactionProfile: { omitted: ['derivative_annotations'], rationale: 'External disclosure minimization.' },
+    });
+
+    expect((dossier.content.derivatives?.[0] as Record<string, unknown>).annotation_text).toBeUndefined();
+    expect((dossier.content.derivatives?.[0] as Record<string, unknown>).redacted).toBe(true);
+  });
+
+  it('detects a modified derivative record before import', async () => {
+    const dossier = await buildFixture();
+    (dossier.content.derivatives?.[0] as { annotation_text: string }).annotation_text = 'Modified after export';
+
+    const verification = await verifyForensicDossier(dossier);
+    expect(verification.valid).toBe(false);
+    expect(verification.errors).toContain('Integrity mismatch for derivatives.');
   });
 
   it('detects a modified dossier content object before import', async () => {

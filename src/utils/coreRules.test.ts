@@ -5,7 +5,7 @@ import {
   normaliseEvidenceProvenance,
   validateEvidenceProvenance,
 } from './evidenceProvenance';
-import { buildGraphInsights, searchCaseContent } from './graphInsights';
+import { buildGraphInsights, runExplainableLocalGraphQuery, searchCaseContent } from './graphInsights';
 import { EVIDENCE_INTAKE_TEMPLATES, findEvidenceIntakeTemplate } from './evidenceIntakeTemplates';
 import type { GraphElement, IntelNote } from '../stores/caseStore';
 
@@ -101,6 +101,22 @@ describe('case structure analysis', () => {
     expect(insights.itemsWithoutObservedTime).toBe(1);
     expect(insights.notesWithoutLinks).toBe(1);
     expect(insights.qualityFindings.map((finding) => finding.kind)).toEqual(expect.arrayContaining(['missing_observed_time', 'unlinked_note', 'pending_review']));
+  });
+
+  it('runs a saved local graph query with explicit match reasons rather than a score', () => {
+    const elements: GraphElement[] = [
+      { data: { id: 'phone-1', label: 'Primary handset', type: 'phone', confidence: 3, attributes: { identifier: '07700900123' } } },
+      { data: { id: 'person-1', label: 'Operator', type: 'person', confidence: 3, attributes: {} } },
+      { data: { id: 'edge-1', source: 'person-1', target: 'phone-1', label: 'CONTACTED' } },
+    ];
+
+    const results = runExplainableLocalGraphQuery(elements, { queryText: '900123', nodeTypes: ['phone'], includeRelationships: true });
+    expect(results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'phone-1', kind: 'node', reasons: expect.arrayContaining(['entity type is within saved filter: phone', 'entity metadata contains the saved text filter']) }),
+      expect.objectContaining({ id: 'edge-1', kind: 'relationship', reasons: expect.arrayContaining(['relationship is directly connected to an entity matched by this saved query']) }),
+    ]));
+    expect(results.some((result) => 'score' in result)).toBe(false);
+    expect(() => runExplainableLocalGraphQuery(elements, { queryText: '', nodeTypes: [], includeRelationships: false })).toThrow('requires text or at least one entity type');
   });
 
   it('returns local records by searchable evidence, relationship, and note fields', () => {

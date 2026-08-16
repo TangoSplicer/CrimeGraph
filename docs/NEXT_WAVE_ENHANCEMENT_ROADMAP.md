@@ -57,3 +57,46 @@ A lead is a case-scoped, local record of an incoming observation or follow-up op
 [4]: https://caseclosedsoftware.com/ "Case Closed: Law Enforcement Case Management Software"
 [5]: https://datawalk.com/industries/law-enforcement/ "DataWalk: Law Enforcement Intelligence Software"
 [6]: https://www.soundthinking.com/blog/3-considerations-when-choosing-the-best-investigation-management-software/ "SoundThinking: Investigation Management Software Considerations"
+
+## P1 implementation design: Derivative and Annotation Ledger
+
+The first P1 increment is an **evidence derivative and annotation ledger**, not a media-editing system. It records analyst-created context around an existing evidence item without modifying that item, its captured attachment, its provenance record, or its source digest.
+
+| Ledger rule | Implementation decision |
+|---|---|
+| Source preservation | Every record names its parent evidence node, parent provenance fingerprint, and (where present) source attachment digest. No update path changes a source file, source provenance, or evidence node. |
+| Integrity | Each ledger record receives a canonical SHA-256 record digest over its immutable identifying and descriptive fields. Creation is appended to the hash-linked audit ledger. |
+| Initial record types | `annotation`, `transcript_excerpt`, `review_note`, and `redaction_instruction`. These are operator-authored text records; no automatic transcription, conversion, or redaction is claimed. |
+| Time context | An optional start/end timecode describes the relevant portion of media. It is an operator assertion and does not alter the source recording. |
+| Permissions | Administrators, supervisors, and analysts may create records through existing intelligence-update authority. Field accounts cannot create, alter, or promote derivatives. |
+| Redaction boundary | A `redaction_instruction` is an auditable review instruction only. It neither edits source media nor produces a redacted output. Controlled dossier export remains the only existing release mechanism. |
+| Export and import | New forensic dossiers include ledger records as signed content. The verifier supports earlier v1 dossiers and new v2 dossiers; on import, accepted records are remapped to the imported evidence node while retaining their stated source fingerprint. |
+
+> This increment intentionally excludes automatic transcription, media conversion, visual enhancement, face or object detection, content inference, and destructive edits. Those capabilities require separate policy, provenance, quality, and review designs before consideration.
+
+## P1 acceptance conditions
+
+| Control | Required outcome |
+|---|---|
+| Evidence scope | Records may be created only for an existing evidence node in the active locally accessible case. |
+| Input validation | Record type, label, annotation text, and optional timecode boundaries are bounded and validated; an end time cannot precede a start time. |
+| Auditability | Record creation appends an `ADD_EVIDENCE_DERIVATIVE` entry to the hash-linked ledger. |
+| Dossier integrity | A v2 dossier signs the ledger collection and rejects any tampering of it; verified v1 dossier support remains intact. |
+| Import traceability | Imported ledger records receive new local identifiers, map only to accepted imported evidence nodes, and retain the source-provenance fingerprint. |
+| UI clarity | The evidence detail surface labels entries as operator-authored annotations or instructions, not verified facts or transformed source media. |
+
+## P1 implementation delivered: Explainable saved local graph queries
+
+Saved local graph queries now record a query name, optional text filter, optional entity-type filters, and an explicit relationship-context choice in encrypted local storage. They preserve **filters only**. Running a query evaluates the active local graph at that moment and displays a reason for every result, including text matches in labels/metadata/provenance and direct relationship context from a matched entity.
+
+| Guardrail | Delivered behavior |
+|---|---|
+| No scoring | Query results are sorted deterministically by kind, title, and identifier. No relevance score, priority, risk, likelihood, or confidence is calculated. |
+| Human readability | Every visible entity or relationship result carries at least one plain-language reason for its inclusion. |
+| Local boundary | The evaluator receives only the active case graph in memory. No network lookup, data enrichment, background synchronization, or query transfer is performed. |
+| Permission boundary | Creation and deletion require existing intelligence-update authority. Field and read-only roles cannot create, alter, or delete saved queries. |
+| Auditability | Saves and deletions create hash-ledger entries. Query runs are read-only and deliberately do not create background audit noise. |
+
+## P1 implementation delivered: Source-preserving derivative and annotation ledger
+
+The ledger stores only operator-authored annotations, transcript excerpts, review notes, and redaction instructions. Each record is source-bound, canonically digested, audited, included in signed dossier v2 content, and import-remapped only to an accepted evidence parent. The implementation intentionally excludes automatic transcription, conversion, enhancement, recognition, object detection, and media redaction.

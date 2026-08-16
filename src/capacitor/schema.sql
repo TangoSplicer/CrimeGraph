@@ -229,6 +229,37 @@ CREATE TABLE IF NOT EXISTS evidence_provenance (
   FOREIGN KEY(node_id) REFERENCES nodes(id)
 );
 
+CREATE TABLE IF NOT EXISTS saved_graph_queries (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  query_text TEXT NOT NULL,
+  node_types TEXT NOT NULL DEFAULT '[]',
+  include_relationships INTEGER NOT NULL DEFAULT 1 CHECK(include_relationships IN (0, 1)),
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_derivatives (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  parent_node_id TEXT NOT NULL,
+  parent_evidence_fingerprint TEXT NOT NULL,
+  source_attachment_digest TEXT,
+  record_type TEXT NOT NULL CHECK(record_type IN ('annotation', 'transcript_excerpt', 'review_note', 'redaction_instruction')),
+  label TEXT NOT NULL,
+  annotation_text TEXT NOT NULL,
+  timecode_start_seconds REAL,
+  timecode_end_seconds REAL,
+  record_digest TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(case_id) REFERENCES cases(id),
+  FOREIGN KEY(parent_node_id) REFERENCES nodes(id)
+);
+
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL,
@@ -261,6 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_field_tasks_case_status ON field_tasks(case_id, s
 CREATE INDEX IF NOT EXISTS idx_playbook_milestones_case_status ON case_playbook_milestones(case_id, status, due_at);
 CREATE INDEX IF NOT EXISTS idx_case_leads_case_status ON case_leads(case_id, status, received_at);
 CREATE INDEX IF NOT EXISTS idx_case_leads_promoted_node ON case_leads(promoted_node_id);
+CREATE INDEX IF NOT EXISTS idx_saved_graph_queries_case ON saved_graph_queries(case_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_id ON nodes(case_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_case_occurred_at ON nodes(case_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_nodes_review_queue ON nodes(review_status, submitted_at);
@@ -268,3 +300,5 @@ CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);
 CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);
 CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);
+CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_parent ON evidence_derivatives(parent_node_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_case ON evidence_derivatives(case_id, created_at);

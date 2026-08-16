@@ -121,3 +121,10 @@ Authorized administrators, supervisors, and analysts can open an evidence record
 Analysts and higher roles can attach a **stated observation context** to a local intelligence record. This records source basis, location and temporal precision, optional coordinates, a stated uncertainty radius, and an uncertainty note. It is deliberately separate from record confidence: it does not calculate risk, certainty, a location prediction, or any person-level score. A coordinate requires an explicit precision declaration, and an `exact` precision cannot be paired with an uncertainty radius exceeding 25 metres. The context is exported and verified in a forensic dossier v4, with operator identifiers subject to the existing observer-identity redaction control.
 
 Users with case-export authority can create a **reproducible briefing** from explicitly selected local records and notes. The builder produces deterministic Markdown and a SHA-256 content digest, stores the selected identifiers and output in encrypted local storage, and writes an audit entry. It does not use a language model, generate conclusions, transmit material, or authorize disclosure. Any subsequent dissemination remains a deliberate, separately authorized user-mediated operation.
+
+
+## Secure local peer-to-peer synchronization
+
+CrimeGraph implements cloud-free peer-to-peer synchronization across trusted devices using Android Keystore P-256 identities and hash-linked audit deltas. Devices must first be paired via verified invitation and registered in the encrypted `trusted_peers` store. 
+
+During synchronization, the sending device generates a signed delta payload containing case nodes, edges, notes, provenance, derivatives, movements, and observation contexts, along with the latest audit head hash. The receiving device cryptographically verifies the sender's P-256 signature against its verified peer record and checks delta integrity. Validated additive records are committed in an atomic database transaction, and an entry is written to the local hash-linked audit ledger (`SYNC_INBOUND_DELTA`). No cloud relays, external servers, or background polling are used.

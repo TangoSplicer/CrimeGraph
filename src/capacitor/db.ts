@@ -195,6 +195,51 @@ async function initialiseDatabase() {
         FOREIGN KEY(case_id) REFERENCES cases(id),
         FOREIGN KEY(node_id) REFERENCES nodes(id)
       );
+      CREATE TABLE IF NOT EXISTS reproducible_briefings (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        selected_node_ids TEXT NOT NULL,
+        selected_note_ids TEXT NOT NULL,
+        markdown_content TEXT NOT NULL,
+        content_digest TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id)
+      );
+      CREATE TABLE IF NOT EXISTS observation_contexts (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        node_id TEXT NOT NULL UNIQUE,
+        source_basis TEXT NOT NULL CHECK(source_basis IN ('direct_observation', 'source_report', 'system_record', 'analyst_assessment')),
+        location_precision TEXT NOT NULL CHECK(location_precision IN ('exact', 'approximate', 'area', 'unknown')),
+        latitude REAL,
+        longitude REAL,
+        uncertainty_radius_meters REAL,
+        temporal_precision TEXT NOT NULL CHECK(temporal_precision IN ('exact', 'approximate', 'window', 'unknown')),
+        uncertainty_note TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id),
+        FOREIGN KEY(node_id) REFERENCES nodes(id)
+      );
+      CREATE TABLE IF NOT EXISTS exhibit_movements (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        evidence_node_id TEXT NOT NULL,
+        movement_type TEXT NOT NULL CHECK(movement_type IN ('sealed', 'checked_out', 'returned', 'disposed')),
+        from_location TEXT,
+        to_location TEXT,
+        custodian TEXT NOT NULL,
+        reference_note TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(case_id) REFERENCES cases(id),
+        FOREIGN KEY(evidence_node_id) REFERENCES nodes(id)
+      );
       CREATE TABLE IF NOT EXISTS evidence_derivatives (
         id TEXT PRIMARY KEY,
         case_id TEXT NOT NULL,
@@ -277,6 +322,10 @@ async function initialiseDatabase() {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_case_id ON edges(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_case_id ON evidence_provenance(case_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_provenance_status ON evidence_provenance(verification_status, handling_status);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_reproducible_briefings_case ON reproducible_briefings(case_id, created_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_observation_contexts_case ON observation_contexts(case_id, location_precision);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_exhibit_movements_evidence ON exhibit_movements(evidence_node_id, created_at);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_exhibit_movements_case ON exhibit_movements(case_id, created_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_parent ON evidence_derivatives(parent_node_id, created_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_evidence_derivatives_case ON evidence_derivatives(case_id, created_at);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_trusted_peers_status ON trusted_peers(status);');

@@ -112,3 +112,12 @@ New collaboration transports, including Bluetooth or mesh case transfer, must re
 ## References
 
 [1]: https://capacitorjs.com/docs/updating/8-0 "Capacitor 8 migration guide"
+
+
+## Offline exhibit, observation-context, and reproducible-briefing workflows
+
+Authorized administrators, supervisors, and analysts can open an evidence record to generate its **offline CrimeGraph exhibit QR label** and review its append-only physical custody history. The label contains opaque local references plus the evidence provenance fingerprint. It is a local lookup aid only: it neither transfers case data nor establishes authenticity. A scanned or pasted label must match the displayed evidence record before it is relied upon. Exhibit sealing, checkout, return, and disposal append custody events only; each event requires high-risk reauthentication and is recorded in the hash-linked audit ledger. Field accounts cannot alter exhibit movements.
+
+Analysts and higher roles can attach a **stated observation context** to a local intelligence record. This records source basis, location and temporal precision, optional coordinates, a stated uncertainty radius, and an uncertainty note. It is deliberately separate from record confidence: it does not calculate risk, certainty, a location prediction, or any person-level score. A coordinate requires an explicit precision declaration, and an `exact` precision cannot be paired with an uncertainty radius exceeding 25 metres. The context is exported and verified in a forensic dossier v4, with operator identifiers subject to the existing observer-identity redaction control.
+
+Users with case-export authority can create a **reproducible briefing** from explicitly selected local records and notes. The builder produces deterministic Markdown and a SHA-256 content digest, stores the selected identifiers and output in encrypted local storage, and writes an audit entry. It does not use a language model, generate conclusions, transmit material, or authorize disclosure. Any subsequent dissemination remains a deliberate, separately authorized user-mediated operation.

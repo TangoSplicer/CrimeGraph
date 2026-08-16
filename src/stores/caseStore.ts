@@ -9,6 +9,8 @@ import { getDeviceIdentity, signWithDeviceIdentity, verifyDeviceSignature } from
 import { buildForensicDossier, verifyForensicDossier, type DossierDisclosure, type DossierRedactionProfile } from '../utils/forensicDossier';
 import { writeEncryptedEvidenceMedia } from '../utils/secureMedia';
 import { createEvidenceDerivativeDigest, normaliseDerivativeRecord, type EvidenceDerivativeType } from '../utils/evidenceDerivative';
+import { normaliseObservationContext, type ObservationContextInput, type ObservationLocationPrecision, type ObservationSourceBasis, type ObservationTemporalPrecision } from '../utils/observationContext';
+import { buildReproducibleBriefing } from '../utils/briefingBuilder';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { appendAuditEntry, verifyAuditChain, type AuditVerificationResult } from '../utils/auditLedger';
 import { assertPermission, can } from '../utils/permissions';
@@ -34,6 +36,10 @@ export interface CasePlaybookMilestone { id: string; caseId: string; title: stri
 export type CaseLeadStatus = 'new' | 'under_review' | 'actioned' | 'closed' | 'promoted';
 export interface CaseLead { id: string; caseId: string; title: string; summary: string; sourceType: string; sourceReference: string; receivedAt: string; sensitivityMarking: string; status: CaseLeadStatus; dispositionNote: string; promotedNodeId: string | null; promotedBy: string | null; promotedAt: string | null; createdBy: string; createdAt: string; updatedBy: string; updatedAt: string; }
 export interface EvidenceDerivative { id: string; caseId: string; parentNodeId: string; parentEvidenceFingerprint: string; sourceAttachmentDigest: string; recordType: EvidenceDerivativeType; label: string; annotationText: string; timecodeStartSeconds: number | null; timecodeEndSeconds: number | null; recordDigest: string; createdBy: string; createdAt: string; }
+export type ExhibitMovementType = 'sealed' | 'checked_out' | 'returned' | 'disposed';
+export interface ExhibitMovement { id: string; caseId: string; evidenceNodeId: string; movementType: ExhibitMovementType; fromLocation: string; toLocation: string; custodian: string; referenceNote: string; createdBy: string; createdAt: string; }
+export interface ObservationContext { id: string; caseId: string; nodeId: string; sourceBasis: ObservationSourceBasis; locationPrecision: ObservationLocationPrecision; latitude: number | null; longitude: number | null; uncertaintyRadiusMeters: number | null; temporalPrecision: ObservationTemporalPrecision; uncertaintyNote: string; createdBy: string; createdAt: string; updatedAt: string; }
+export interface ReproducibleBriefingRecord { id: string; caseId: string; title: string; purpose: string; selectedNodeIds: string[]; selectedNoteIds: string[]; markdownContent: string; contentDigest: string; createdBy: string; createdAt: string; }
 export interface SavedGraphQuery { id: string; caseId: string; name: string; queryText: string; nodeTypes: string[]; includeRelationships: boolean; createdBy: string; createdAt: string; updatedAt: string; }
 export type ReviewStatus = 'not_required' | 'pending' | 'approved' | 'returned';
 
@@ -57,6 +63,9 @@ interface CaseState {
   playbookMilestones: CasePlaybookMilestone[];
   caseLeads: CaseLead[];
   evidenceDerivatives: EvidenceDerivative[];
+  exhibitMovements: ExhibitMovement[];
+  selectedObservationContext: ObservationContext | null;
+  reproducibleBriefings: ReproducibleBriefingRecord[];
   savedGraphQueries: SavedGraphQuery[];
   notes: IntelNote[];
   selectedNodeId: string | null;
@@ -88,6 +97,12 @@ interface CaseState {
   promoteCaseLead: (leadId: string, nodeType: string, confidence: number, attributes?: Record<string, string>, occurredAt?: string) => Promise<void>;
   loadEvidenceDerivatives: (nodeId: string) => Promise<void>;
   addEvidenceDerivative: (nodeId: string, recordType: EvidenceDerivativeType, label: string, annotationText: string, timecodeStartSeconds?: number | string | null, timecodeEndSeconds?: number | string | null) => Promise<void>;
+  loadExhibitMovements: (nodeId: string) => Promise<void>;
+  recordExhibitMovement: (nodeId: string, movementType: ExhibitMovementType, fromLocation: string, toLocation: string, custodian: string, referenceNote?: string) => Promise<void>;
+  loadObservationContext: (nodeId: string) => Promise<void>;
+  upsertObservationContext: (nodeId: string, input: ObservationContextInput) => Promise<void>;
+  loadReproducibleBriefings: (caseId: string) => Promise<void>;
+  createReproducibleBriefing: (caseId: string, title: string, purpose: string, nodeIds: string[], noteIds: string[]) => Promise<ReproducibleBriefingRecord>;
   loadSavedGraphQueries: (caseId: string) => Promise<void>;
   saveGraphQuery: (caseId: string, name: string, queryText: string, nodeTypes: string[], includeRelationships: boolean) => Promise<void>;
   deleteSavedGraphQuery: (queryId: string) => Promise<void>;
@@ -244,6 +259,9 @@ export const useCaseStore = create<CaseState>((set, get) => ({
   playbookMilestones: [],
   caseLeads: [],
   evidenceDerivatives: [],
+  exhibitMovements: [],
+  selectedObservationContext: null,
+  reproducibleBriefings: [],
   savedGraphQueries: [],
   notes: [],
   selectedNodeId: null,
@@ -695,6 +713,108 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     await get().loadEvidenceDerivatives(nodeId);
   },
 
+  loadExhibitMovements: async (nodeId) => {
+    const db = await getDb();
+    const parentResult = await db.query("SELECT case_id FROM nodes WHERE id = ? AND type = 'evidence' LIMIT 1", [nodeId]);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('Evidence item was not found for exhibit handling.');
+    await ensureCaseAccess(String(parent.case_id));
+    const response = await db.query('SELECT * FROM exhibit_movements WHERE evidence_node_id = ? ORDER BY created_at DESC', [nodeId]);
+    set({ exhibitMovements: (response.values || []).map((record: any): ExhibitMovement => ({
+      id: String(record.id), caseId: String(record.case_id), evidenceNodeId: String(record.evidence_node_id), movementType: record.movement_type as ExhibitMovementType,
+      fromLocation: String(record.from_location || ''), toLocation: String(record.to_location || ''), custodian: String(record.custodian), referenceNote: String(record.reference_note || ''), createdBy: String(record.created_by), createdAt: String(record.created_at),
+    })) });
+  },
+
+  recordExhibitMovement: async (nodeId, movementType, fromLocation, toLocation, custodian, referenceNote = '') => {
+    assertCurrentPermission('exhibit:move');
+    if (!(['sealed', 'checked_out', 'returned', 'disposed'] as ExhibitMovementType[]).includes(movementType)) throw new Error('Unsupported exhibit movement type.');
+    const cleanFrom = fromLocation.trim().slice(0, 240);
+    const cleanTo = toLocation.trim().slice(0, 240);
+    const cleanCustodian = custodian.trim().slice(0, 120);
+    const cleanNote = referenceNote.trim().slice(0, 1200);
+    if (!cleanCustodian) throw new Error('Exhibit movement requires a receiving or responsible custodian.');
+    if ((movementType === 'sealed' || movementType === 'returned') && !cleanTo) throw new Error('Sealing or returning an exhibit requires a destination location.');
+    if (movementType === 'checked_out' && !cleanFrom) throw new Error('Checking out an exhibit requires its source location.');
+    if (movementType === 'disposed' && !cleanNote) throw new Error('Disposing of an exhibit requires an authorized reference or reason.');
+    await requireHighRiskReauthentication(`Confirm exhibit movement: ${movementType.replace('_', ' ')}`);
+    const db = await getDb();
+    const parentResult = await db.query('SELECT ep.case_id FROM evidence_provenance ep INNER JOIN nodes n ON n.id = ep.node_id WHERE ep.node_id = ? AND n.type = ? LIMIT 1', [nodeId, 'evidence']);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('A recorded evidence item is required before an exhibit movement can be added.');
+    await ensureCaseAccess(String(parent.case_id));
+    const movementId = createId('exhibit_movement');
+    const now = new Date().toISOString();
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO exhibit_movements (id, case_id, evidence_node_id, movement_type, from_location, to_location, custodian, reference_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [movementId, String(parent.case_id), nodeId, movementType, cleanFrom || null, cleanTo || null, cleanCustodian, cleanNote || null, currentOperator(), now]);
+      await appendAuditEntry(db, 'RECORD_EXHIBIT_MOVEMENT', movementId, `Recorded ${movementType.replace('_', ' ')} for exhibit evidence ${nodeId}`, currentOperator());
+    });
+    await get().loadExhibitMovements(nodeId);
+  },
+
+  loadObservationContext: async (nodeId) => {
+    const db = await getDb();
+    const parentResult = await db.query('SELECT case_id FROM nodes WHERE id = ? LIMIT 1', [nodeId]);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('Intelligence record was not found for observation context.');
+    await ensureCaseAccess(String(parent.case_id));
+    const response = await db.query('SELECT * FROM observation_contexts WHERE node_id = ? LIMIT 1', [nodeId]);
+    const record = response.values?.[0];
+    set({ selectedObservationContext: record ? {
+      id: String(record.id), caseId: String(record.case_id), nodeId: String(record.node_id), sourceBasis: record.source_basis as ObservationSourceBasis, locationPrecision: record.location_precision as ObservationLocationPrecision,
+      latitude: record.latitude === null || record.latitude === undefined ? null : Number(record.latitude), longitude: record.longitude === null || record.longitude === undefined ? null : Number(record.longitude),
+      uncertaintyRadiusMeters: record.uncertainty_radius_meters === null || record.uncertainty_radius_meters === undefined ? null : Number(record.uncertainty_radius_meters), temporalPrecision: record.temporal_precision as ObservationTemporalPrecision,
+      uncertaintyNote: String(record.uncertainty_note || ''), createdBy: String(record.created_by), createdAt: String(record.created_at), updatedAt: String(record.updated_at),
+    } : null });
+  },
+
+  upsertObservationContext: async (nodeId, input) => {
+    assertCurrentPermission('intelligence:update');
+    const normalised = normaliseObservationContext(input);
+    const db = await getDb();
+    const parentResult = await db.query('SELECT case_id FROM nodes WHERE id = ? LIMIT 1', [nodeId]);
+    const parent = parentResult.values?.[0];
+    if (!parent) throw new Error('Intelligence record was not found for observation context.');
+    const caseId = String(parent.case_id);
+    await ensureCaseAccess(caseId);
+    const now = new Date().toISOString();
+    const contextId = createId('observation_context');
+    await withTransaction(db, async () => {
+      await db.run(`INSERT INTO observation_contexts (id, case_id, node_id, source_basis, location_precision, latitude, longitude, uncertainty_radius_meters, temporal_precision, uncertainty_note, created_by, created_at, updated_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(node_id) DO UPDATE SET source_basis = excluded.source_basis, location_precision = excluded.location_precision, latitude = excluded.latitude, longitude = excluded.longitude, uncertainty_radius_meters = excluded.uncertainty_radius_meters, temporal_precision = excluded.temporal_precision, uncertainty_note = excluded.uncertainty_note, updated_by = excluded.updated_by, updated_at = excluded.updated_at`, [contextId, caseId, nodeId, normalised.sourceBasis, normalised.locationPrecision, normalised.latitude, normalised.longitude, normalised.uncertaintyRadiusMeters, normalised.temporalPrecision, normalised.uncertaintyNote || null, currentOperator(), now, currentOperator(), now]);
+      await appendAuditEntry(db, 'UPSERT_OBSERVATION_CONTEXT', nodeId, `Recorded source basis and stated uncertainty context for intelligence ${nodeId}`, currentOperator());
+    });
+    await get().loadObservationContext(nodeId);
+  },
+
+  loadReproducibleBriefings: async (caseId) => {
+    await ensureCaseAccess(caseId);
+    const db = await getDb();
+    const response = await db.query('SELECT * FROM reproducible_briefings WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
+    set({ reproducibleBriefings: (response.values || []).map((record: any): ReproducibleBriefingRecord => ({
+      id: String(record.id), caseId: String(record.case_id), title: String(record.title), purpose: String(record.purpose), selectedNodeIds: parseLinkedNodes(record.selected_node_ids), selectedNoteIds: parseLinkedNodes(record.selected_note_ids), markdownContent: String(record.markdown_content), contentDigest: String(record.content_digest), createdBy: String(record.created_by), createdAt: String(record.created_at),
+    })) });
+  },
+
+  createReproducibleBriefing: async (caseId, title, purpose, nodeIds, noteIds) => {
+    assertCurrentPermission('case:export');
+    await ensureCaseAccess(caseId);
+    const currentCase = get().cases.find((candidate) => candidate.id === caseId);
+    if (!currentCase) throw new Error('Active case was not found for briefing creation.');
+    const createdAt = new Date().toISOString();
+    const built = await buildReproducibleBriefing({ caseReference: currentCase.reference_number, caseTitle: currentCase.title, classification: currentCase.classification, title, purpose, nodeIds, noteIds, createdBy: currentOperator(), createdAt, graphElements: get().graphElements, notes: get().notes });
+    const briefingId = createId('briefing');
+    const record: ReproducibleBriefingRecord = { id: briefingId, caseId, title: title.trim().slice(0, 160), purpose: purpose.trim().slice(0, 500), selectedNodeIds: built.selectedNodeIds, selectedNoteIds: built.selectedNoteIds, markdownContent: built.markdown, contentDigest: built.contentDigest, createdBy: currentOperator(), createdAt };
+    const db = await getDb();
+    await withTransaction(db, async () => {
+      await db.run('INSERT INTO reproducible_briefings (id, case_id, title, purpose, selected_node_ids, selected_note_ids, markdown_content, content_digest, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [record.id, record.caseId, record.title, record.purpose, JSON.stringify(record.selectedNodeIds), JSON.stringify(record.selectedNoteIds), record.markdownContent, record.contentDigest, record.createdBy, record.createdAt]);
+      await appendAuditEntry(db, 'CREATE_REPRODUCIBLE_BRIEFING', briefingId, `Created reproducible briefing: ${record.title}`, currentOperator());
+    });
+    await get().loadReproducibleBriefings(caseId);
+    return record;
+  },
+
   loadSavedGraphQueries: async (caseId) => {
     await ensureCaseAccess(caseId);
     const db = await getDb();
@@ -883,12 +1003,14 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const db = await getDb();
     await withTransaction(db, async () => {
       await db.run('DELETE FROM edges WHERE source = ? OR target = ?', [nodeId, nodeId]);
+      await db.run('DELETE FROM exhibit_movements WHERE evidence_node_id = ?', [nodeId]);
+      await db.run('DELETE FROM observation_contexts WHERE node_id = ?', [nodeId]);
       await db.run('DELETE FROM evidence_derivatives WHERE parent_node_id = ?', [nodeId]);
       await db.run('DELETE FROM evidence_provenance WHERE node_id = ?', [nodeId]);
       await db.run('DELETE FROM nodes WHERE id = ?', [nodeId]);
       await appendAuditEntry(db, 'DELETE_NODE_CASCADE', nodeId, 'Deleted entity, dependent evidence ledger records, and attached relationships', currentOperator());
     });
-    set({ graphElements: get().graphElements.filter((element) => element.data.id !== nodeId && element.data.source !== nodeId && element.data.target !== nodeId), evidenceDerivatives: get().evidenceDerivatives.filter((entry) => entry.parentNodeId !== nodeId), selectedNodeId: null, selectedEdgeId: null });
+    set({ graphElements: get().graphElements.filter((element) => element.data.id !== nodeId && element.data.source !== nodeId && element.data.target !== nodeId), evidenceDerivatives: get().evidenceDerivatives.filter((entry) => entry.parentNodeId !== nodeId), exhibitMovements: get().exhibitMovements.filter((entry) => entry.evidenceNodeId !== nodeId), selectedObservationContext: get().selectedObservationContext?.nodeId === nodeId ? null : get().selectedObservationContext, selectedNodeId: null, selectedEdgeId: null });
   },
 
   deleteEdge: async (edgeId) => {
@@ -958,7 +1080,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const recipientDescription = window.prompt('RECIPIENT: Describe the authorized recipient or destination:');
     if (!recipientDescription) return;
     const authorizationReference = window.prompt('AUTHORIZATION REFERENCE: Optional approval, warrant, or disclosure reference:') || undefined;
-    const redactionChoice = window.prompt('REDACTION PROFILE: Enter comma-separated values from notes, derivative_annotations, attachment_paths, observer_identity, observed_time; leave blank for none:') || '';
+    const redactionChoice = window.prompt('REDACTION PROFILE: Enter comma-separated values from notes, derivative_annotations, custody_locations, attachment_paths, observer_identity, observed_time; leave blank for none:') || '';
     const omitted = redactionChoice.split(',').map((value) => value.trim()).filter(Boolean) as DossierRedactionProfile['omitted'];
     const rationale = omitted.length > 0 ? window.prompt('REDACTION RATIONALE: Explain why these fields are omitted:') || '' : '';
     if (activeCase.classification !== 'OFFICIAL') await requireHighRiskReauthentication('Confirm restricted forensic dossier export');
@@ -971,6 +1093,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
     const auditHeadHash = auditEntries.length ? String(auditEntries[auditEntries.length - 1].entry_hash || '') || null : null;
     const markingsResponse = await db.query('SELECT object_type, object_id, marking, handling_instructions, created_by, created_at FROM data_markings WHERE case_id = ? ORDER BY object_type, object_id, marking', [activeCaseId]);
     const derivativesResponse = await db.query('SELECT id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at FROM evidence_derivatives WHERE case_id = ? ORDER BY created_at, id', [activeCaseId]);
+    const movementsResponse = await db.query('SELECT id, case_id, evidence_node_id, movement_type, from_location, to_location, custodian, reference_note, created_by, created_at FROM exhibit_movements WHERE case_id = ? ORDER BY created_at, id', [activeCaseId]);
+    const contextsResponse = await db.query('SELECT id, case_id, node_id, source_basis, location_precision, latitude, longitude, uncertainty_radius_meters, temporal_precision, uncertainty_note, created_by, created_at, updated_by, updated_at FROM observation_contexts WHERE case_id = ? ORDER BY created_at, id', [activeCaseId]);
     const now = new Date().toISOString();
     const dossierId = createId('dossier');
     const identity = await getDeviceIdentity();
@@ -994,6 +1118,8 @@ export const useCaseStore = create<CaseState>((set, get) => ({
         notes,
         markings: markingsResponse.values || [],
         derivatives: derivativesResponse.values || [],
+        movements: movementsResponse.values || [],
+        contexts: contextsResponse.values || [],
       },
     });
     const dossierVerification = await verifyForensicDossier(dossier);
@@ -1120,7 +1246,7 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           [createId('note'), newCaseId, content, JSON.stringify(linkedNodeIds), typeof candidate.created_at === 'string' ? candidate.created_at.slice(0, 40) : now],
         );
       }
-      const dossierDerivatives = isForensicDossier && decoded?.schema_version === 2 && Array.isArray(decoded?.content?.derivatives) ? decoded.content.derivatives.slice(0, MAX_IMPORT_DERIVATIVES) : [];
+      const dossierDerivatives = isForensicDossier && (decoded?.schema_version === 2 || decoded?.schema_version === 3) && Array.isArray(decoded?.content?.derivatives) ? decoded.content.derivatives.slice(0, MAX_IMPORT_DERIVATIVES) : [];
       for (const derivative of dossierDerivatives) {
         if (!derivative || typeof derivative !== 'object') throw new Error('Verified dossier contains an invalid derivative record.');
         const candidate = derivative as Record<string, unknown>;
@@ -1136,6 +1262,40 @@ export const useCaseStore = create<CaseState>((set, get) => ({
           recordType: candidate.record_type as EvidenceDerivativeType, label: candidate.label, annotationText: candidate.annotation_text, timecodeStartSeconds: candidate.timecode_start_seconds, timecodeEndSeconds: candidate.timecode_end_seconds, createdBy, createdAt,
         });
         await db.run('INSERT INTO evidence_derivatives (id, case_id, parent_node_id, parent_evidence_fingerprint, source_attachment_digest, record_type, label, annotation_text, timecode_start_seconds, timecode_end_seconds, record_digest, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [createId('derivative'), normalised.caseId, normalised.parentNodeId, normalised.parentEvidenceFingerprint, normalised.sourceAttachmentDigest || null, normalised.recordType, normalised.label, normalised.annotationText, normalised.timecodeStartSeconds, normalised.timecodeEndSeconds, await createEvidenceDerivativeDigest(normalised), normalised.createdBy, normalised.createdAt]);
+      }
+      const dossierMovements = isForensicDossier && decoded?.schema_version === 3 && Array.isArray(decoded?.content?.movements) ? decoded.content.movements.slice(0, MAX_IMPORT_DERIVATIVES) : [];
+      for (const movement of dossierMovements) {
+        if (!movement || typeof movement !== 'object') throw new Error('Verified dossier contains an invalid exhibit movement record.');
+        const candidate = movement as Record<string, unknown>;
+        const parent = typeof candidate.evidence_node_id === 'string' ? importedEvidenceBySourceNode.get(candidate.evidence_node_id) : undefined;
+        const movementType = typeof candidate.movement_type === 'string' ? candidate.movement_type as ExhibitMovementType : null;
+        if (!parent || !movementType || !(['sealed', 'checked_out', 'returned', 'disposed'] as ExhibitMovementType[]).includes(movementType)) {
+          throw new Error('Verified dossier exhibit movement does not map to an accepted evidence item.');
+        }
+        const createdAt = typeof candidate.created_at === 'string' && !Number.isNaN(Date.parse(candidate.created_at)) ? candidate.created_at.slice(0, 40) : now;
+        const custodian = typeof candidate.custodian === 'string' && candidate.custodian.trim() ? candidate.custodian.trim().slice(0, 120) : 'REDACTED_IN_DOSSIER';
+        const createdBy = typeof candidate.created_by === 'string' && candidate.created_by.trim() ? candidate.created_by.trim().slice(0, 120) : 'IMPORTED_PACKAGE';
+        await db.run('INSERT INTO exhibit_movements (id, case_id, evidence_node_id, movement_type, from_location, to_location, custodian, reference_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [createId('exhibit_movement'), newCaseId, parent.nodeId, movementType, typeof candidate.from_location === 'string' ? candidate.from_location.trim().slice(0, 240) || null : null, typeof candidate.to_location === 'string' ? candidate.to_location.trim().slice(0, 240) || null : null, custodian, typeof candidate.reference_note === 'string' ? candidate.reference_note.trim().slice(0, 1200) || null : null, createdBy, createdAt]);
+      }
+      const dossierContexts = isForensicDossier && decoded?.schema_version === 4 && Array.isArray(decoded?.content?.contexts) ? decoded.content.contexts.slice(0, MAX_IMPORT_NODES) : [];
+      for (const context of dossierContexts) {
+        if (!context || typeof context !== 'object') throw new Error('Verified dossier contains an invalid observation context.');
+        const candidate = context as Record<string, unknown>;
+        const sourceNodeId = typeof candidate.node_id === 'string' ? candidate.node_id : '';
+        const localNodeId = idMap.get(sourceNodeId);
+        if (!localNodeId) throw new Error('Verified dossier observation context does not map to an accepted intelligence item.');
+        const normalised = normaliseObservationContext({
+          sourceBasis: candidate.source_basis as ObservationSourceBasis, locationPrecision: candidate.location_precision as ObservationLocationPrecision,
+          latitude: typeof candidate.latitude === 'number' || typeof candidate.latitude === 'string' || candidate.latitude === null ? candidate.latitude : null,
+          longitude: typeof candidate.longitude === 'number' || typeof candidate.longitude === 'string' || candidate.longitude === null ? candidate.longitude : null,
+          uncertaintyRadiusMeters: typeof candidate.uncertainty_radius_meters === 'number' || typeof candidate.uncertainty_radius_meters === 'string' || candidate.uncertainty_radius_meters === null ? candidate.uncertainty_radius_meters : null,
+          temporalPrecision: candidate.temporal_precision as ObservationTemporalPrecision, uncertaintyNote: typeof candidate.uncertainty_note === 'string' ? candidate.uncertainty_note : '',
+        });
+        const createdAt = typeof candidate.created_at === 'string' && !Number.isNaN(Date.parse(candidate.created_at)) ? candidate.created_at.slice(0, 40) : now;
+        const updatedAt = typeof candidate.updated_at === 'string' && !Number.isNaN(Date.parse(candidate.updated_at)) ? candidate.updated_at.slice(0, 40) : createdAt;
+        const createdBy = typeof candidate.created_by === 'string' && candidate.created_by.trim() ? candidate.created_by.trim().slice(0, 120) : 'IMPORTED_PACKAGE';
+        const updatedBy = typeof candidate.updated_by === 'string' && candidate.updated_by.trim() ? candidate.updated_by.trim().slice(0, 120) : createdBy;
+        await db.run('INSERT INTO observation_contexts (id, case_id, node_id, source_basis, location_precision, latitude, longitude, uncertainty_radius_meters, temporal_precision, uncertainty_note, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [createId('observation_context'), newCaseId, localNodeId, normalised.sourceBasis, normalised.locationPrecision, normalised.latitude, normalised.longitude, normalised.uncertaintyRadiusMeters, normalised.temporalPrecision, normalised.uncertaintyNote || null, createdBy, createdAt, updatedBy, updatedAt]);
       }
       await appendAuditEntry(db, isForensicDossier ? 'IMPORT_VERIFIED_DOSSIER' : 'IMPORT_CASE', newCaseId, isForensicDossier ? `Imported verified forensic dossier ${parsed.reference} signed by ${dossierVerification.signerFingerprint}` : `Imported encrypted package ${parsed.reference}`, currentOperator());
     });

@@ -77,7 +77,7 @@ beforeEach(() => {
   mocks.appendAuditEntry.mockResolvedValue(undefined);
   useCaseStore.setState({
     cases: [], activeCaseId: null, graphElements: [], auditLogs: [], auditVerification: null,
-    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], playbookMilestones: [], caseLeads: [], evidenceDerivatives: [], savedGraphQueries: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
+    reviewQueue: [], caseAssignments: [], assignableFieldOperators: [], dataMarkings: [], disclosureRecords: [], fieldTasks: [], playbookMilestones: [], caseLeads: [], evidenceDerivatives: [], exhibitMovements: [], selectedObservationContext: null, savedGraphQueries: [], notes: [], selectedNodeId: null, selectedEdgeId: null, connectingFromId: null, hiddenNodeTypes: [],
   });
 });
 
@@ -221,6 +221,60 @@ describe('case assignment and field work queue', () => {
   });
 });
 
+
+describe('source and uncertainty observation context', () => {
+  it('stores stated source and coordinate precision with an audit entry', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1' }] })
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1' }] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().upsertObservationContext('node-1', { sourceBasis: 'source_report', locationPrecision: 'approximate', latitude: 51.5, longitude: -0.12, uncertaintyRadiusMeters: 100, temporalPrecision: 'window', uncertaintyNote: 'Source-supplied coordinate.' });
+
+    expect(db.run).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO observation_contexts'), [expect.stringMatching(/^observation_context_/), 'case-1', 'node-1', 'source_report', 'approximate', 51.5, -0.12, 100, 'window', 'Source-supplied coordinate.', 'SUP-001', expect.any(String), 'SUP-001', expect.any(String)]);
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'UPSERT_OBSERVATION_CONTEXT', 'node-1', expect.stringContaining('stated uncertainty'), 'SUP-001');
+  });
+
+  it('rejects a field account before an observation context is read or written', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().upsertObservationContext('node-1', { sourceBasis: 'source_report' })).rejects.toThrow('intelligence:update');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('offline exhibit custody ledger', () => {
+  it('records a reauthenticated physical-exhibit movement with an audit entry', async () => {
+    const db = makeDb();
+    db.query
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1' }] })
+      .mockResolvedValueOnce({ values: [{ case_id: 'case-1' }] })
+      .mockResolvedValueOnce({ values: [] });
+    mocks.getDb.mockResolvedValue(db);
+
+    await useCaseStore.getState().recordExhibitMovement('node-evidence-1', 'sealed', 'Intake room', 'Locker A', 'CUST-001', 'Seal reference 001');
+
+    expect(mocks.requireHighRiskReauthentication).toHaveBeenCalledWith('Confirm exhibit movement: sealed');
+    expect(db.run).toHaveBeenCalledWith(
+      'INSERT INTO exhibit_movements (id, case_id, evidence_node_id, movement_type, from_location, to_location, custodian, reference_note, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [expect.stringMatching(/^exhibit_movement_/), 'case-1', 'node-evidence-1', 'sealed', 'Intake room', 'Locker A', 'CUST-001', 'Seal reference 001', 'SUP-001', expect.any(String)],
+    );
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(db, 'RECORD_EXHIBIT_MOVEMENT', expect.stringMatching(/^exhibit_movement_/), expect.stringContaining('sealed'), 'SUP-001');
+  });
+
+  it('rejects a field account before an exhibit movement is read or recorded', async () => {
+    mocks.getAuthState.mockReturnValue({ currentUser: { id: 'field-001', badge: 'FIELD-001', role: 'field' }, setIntentionalBackground: vi.fn() });
+    const db = makeDb();
+    mocks.getDb.mockResolvedValue(db);
+
+    await expect(useCaseStore.getState().recordExhibitMovement('node-evidence-1', 'sealed', 'Intake', 'Locker A', 'CUST-001')).rejects.toThrow('exhibit:move');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
 
 describe('evidence derivative ledger', () => {
   it('records a source-bound annotation with an integrity digest and audit entry', async () => {

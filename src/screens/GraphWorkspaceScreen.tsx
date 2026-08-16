@@ -9,6 +9,7 @@ import { useAuthStore } from '../stores/authStore';
 import { can } from '../utils/permissions';
 import { buildGraphInsights, runExplainableLocalGraphQuery, searchCaseContent, type ExplainableGraphQueryResult } from '../utils/graphInsights';
 import { readEncryptedEvidenceMedia } from '../utils/secureMedia';
+import { buildExhibitQrPayload, renderExhibitQrDataUrl, verifyExhibitQrReference } from '../utils/exhibitQr';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
 
@@ -22,6 +23,9 @@ export const GraphWorkspaceScreen: React.FC = () => {
     playbookMilestones, loadPlaybookMilestones, createPlaybookMilestone, updatePlaybookMilestone,
     caseLeads, loadCaseLeads, createCaseLead, updateCaseLead, promoteCaseLead,
     evidenceDerivatives, loadEvidenceDerivatives, addEvidenceDerivative,
+    exhibitMovements, loadExhibitMovements, recordExhibitMovement,
+    selectedObservationContext, loadObservationContext, upsertObservationContext,
+    reproducibleBriefings, loadReproducibleBriefings, createReproducibleBriefing,
     savedGraphQueries, loadSavedGraphQueries, saveGraphQuery, deleteSavedGraphQuery
   } = useCaseStore();
   
@@ -63,6 +67,29 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const [savedQueryRelationships, setSavedQueryRelationships] = useState(true);
   const [savedQueryResults, setSavedQueryResults] = useState<ExplainableGraphQueryResult[]>([]);
   const [savedQueryMessage, setSavedQueryMessage] = useState('');
+  const [exhibitQrDataUrl, setExhibitQrDataUrl] = useState('');
+  const [exhibitQrInput, setExhibitQrInput] = useState('');
+  const [exhibitQrMessage, setExhibitQrMessage] = useState('');
+  const [exhibitMovementType, setExhibitMovementType] = useState<'sealed' | 'checked_out' | 'returned' | 'disposed'>('sealed');
+  const [exhibitFromLocation, setExhibitFromLocation] = useState('');
+  const [exhibitToLocation, setExhibitToLocation] = useState('');
+  const [exhibitCustodian, setExhibitCustodian] = useState('');
+  const [exhibitReferenceNote, setExhibitReferenceNote] = useState('');
+  const [exhibitMovementMessage, setExhibitMovementMessage] = useState('');
+  const [observationSourceBasis, setObservationSourceBasis] = useState<'direct_observation' | 'source_report' | 'system_record' | 'analyst_assessment'>('direct_observation');
+  const [observationLocationPrecision, setObservationLocationPrecision] = useState<'exact' | 'approximate' | 'area' | 'unknown'>('unknown');
+  const [observationLatitude, setObservationLatitude] = useState('');
+  const [observationLongitude, setObservationLongitude] = useState('');
+  const [observationRadius, setObservationRadius] = useState('');
+  const [observationTemporalPrecision, setObservationTemporalPrecision] = useState<'exact' | 'approximate' | 'window' | 'unknown'>('unknown');
+  const [observationUncertaintyNote, setObservationUncertaintyNote] = useState('');
+  const [observationMessage, setObservationMessage] = useState('');
+  const [isBriefingOpen, setIsBriefingOpen] = useState(false);
+  const [briefingTitle, setBriefingTitle] = useState('');
+  const [briefingPurpose, setBriefingPurpose] = useState('');
+  const [briefingNodeIds, setBriefingNodeIds] = useState<string[]>([]);
+  const [briefingNoteIds, setBriefingNoteIds] = useState<string[]>([]);
+  const [briefingMessage, setBriefingMessage] = useState('');
 
   // 🚀 NEW: Edit Node State
   const [isEditingNode, setIsEditingNode] = useState(false);
@@ -85,6 +112,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const canCreateLead = can(currentUser?.role, 'lead:create');
   const canManageLeads = can(currentUser?.role, 'lead:manage');
   const canRecordDerivatives = can(currentUser?.role, 'intelligence:update');
+  const canMoveExhibits = can(currentUser?.role, 'exhibit:move');
 
   useEffect(() => {
     if (!activeCaseId) navigate('/');
@@ -108,10 +136,36 @@ export const GraphWorkspaceScreen: React.FC = () => {
   };
 
   useEffect(() => {
+    if (selectedNode?.data.id) loadObservationContext(selectedNode.data.id).catch((error) => setObservationMessage(error instanceof Error ? error.message : 'Observation context is unavailable.'));
+    else { setObservationMessage(''); }
+  }, [selectedNode?.data.id, loadObservationContext]);
+
+  useEffect(() => {
+    if (!selectedObservationContext) {
+      setObservationSourceBasis('direct_observation'); setObservationLocationPrecision('unknown'); setObservationLatitude(''); setObservationLongitude(''); setObservationRadius(''); setObservationTemporalPrecision('unknown'); setObservationUncertaintyNote('');
+      return;
+    }
+    setObservationSourceBasis(selectedObservationContext.sourceBasis); setObservationLocationPrecision(selectedObservationContext.locationPrecision); setObservationLatitude(selectedObservationContext.latitude === null ? '' : String(selectedObservationContext.latitude)); setObservationLongitude(selectedObservationContext.longitude === null ? '' : String(selectedObservationContext.longitude)); setObservationRadius(selectedObservationContext.uncertaintyRadiusMeters === null ? '' : String(selectedObservationContext.uncertaintyRadiusMeters)); setObservationTemporalPrecision(selectedObservationContext.temporalPrecision); setObservationUncertaintyNote(selectedObservationContext.uncertaintyNote);
+  }, [selectedObservationContext?.id, selectedObservationContext?.updatedAt]);
+
+  useEffect(() => {
     const evidence = selectedNode?.data.evidence;
     if (evidence?.nodeId) loadEvidenceDerivatives(evidence.nodeId).catch((error) => setDerivativeMessage(error instanceof Error ? error.message : 'Derivative ledger is unavailable.'));
     else { setDerivativeMessage(''); }
   }, [selectedNode?.data.evidence?.nodeId, loadEvidenceDerivatives]);
+
+  useEffect(() => {
+    const evidence = selectedNode?.data.evidence;
+    if (!evidence?.nodeId || !evidence.caseId || !evidence.exhibitNumber || !evidence.fingerprint) {
+      setExhibitQrDataUrl(''); setExhibitQrInput(''); setExhibitQrMessage(''); setExhibitMovementMessage('');
+      return;
+    }
+    let cancelled = false;
+    const reference = { caseId: evidence.caseId, nodeId: evidence.nodeId, exhibitNumber: evidence.exhibitNumber, provenanceFingerprint: evidence.fingerprint };
+    loadExhibitMovements(evidence.nodeId).catch((error) => setExhibitMovementMessage(error instanceof Error ? error.message : 'Exhibit movement history is unavailable.'));
+    renderExhibitQrDataUrl(buildExhibitQrPayload(reference)).then((dataUrl) => { if (!cancelled) setExhibitQrDataUrl(dataUrl); }).catch((error) => { if (!cancelled) setExhibitQrMessage(error instanceof Error ? error.message : 'Exhibit QR label could not be generated.'); });
+    return () => { cancelled = true; };
+  }, [selectedNode?.data.evidence?.nodeId, selectedNode?.data.evidence?.caseId, selectedNode?.data.evidence?.exhibitNumber, selectedNode?.data.evidence?.fingerprint, loadExhibitMovements]);
 
   useEffect(() => {
     const evidence = selectedNode?.data.evidence;
@@ -286,6 +340,54 @@ export const GraphWorkspaceScreen: React.FC = () => {
     }
   };
 
+  const openBriefingBuilder = () => {
+    if (!activeCaseId) return;
+    setBriefingMessage(''); setIsBriefingOpen(true);
+    loadReproducibleBriefings(activeCaseId).catch((error) => setBriefingMessage(error instanceof Error ? error.message : 'Briefing register is unavailable.'));
+  };
+  const toggleBriefingSelection = (id: string, kind: 'node' | 'note') => {
+    const setter = kind === 'node' ? setBriefingNodeIds : setBriefingNoteIds;
+    setter((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  };
+  const handleCreateBriefing = async () => {
+    if (!activeCaseId) return;
+    try {
+      const briefing = await createReproducibleBriefing(activeCaseId, briefingTitle, briefingPurpose, briefingNodeIds, briefingNoteIds);
+      setBriefingMessage(`Briefing created locally. Content SHA-256: ${briefing.contentDigest}`);
+      setBriefingTitle(''); setBriefingPurpose('');
+    } catch (error) { setBriefingMessage(error instanceof Error ? error.message : 'Briefing could not be created.'); }
+  };
+
+  const handleSaveObservationContext = async () => {
+    const nodeId = selectedNode?.data.id;
+    if (!nodeId) return;
+    try {
+      await upsertObservationContext(nodeId, { sourceBasis: observationSourceBasis, locationPrecision: observationLocationPrecision, latitude: observationLatitude, longitude: observationLongitude, uncertaintyRadiusMeters: observationRadius, temporalPrecision: observationTemporalPrecision, uncertaintyNote: observationUncertaintyNote });
+      setObservationMessage('Source basis and stated uncertainty context saved. This does not alter the record confidence or assert location accuracy.');
+    } catch (error) {
+      setObservationMessage(error instanceof Error ? error.message : 'Observation context could not be saved.');
+    }
+  };
+
+  const handleVerifyExhibitQr = () => {
+    const evidence = selectedNode?.data.evidence;
+    if (!evidence?.caseId || !evidence.nodeId) return;
+    const valid = verifyExhibitQrReference(exhibitQrInput, { caseId: evidence.caseId, nodeId: evidence.nodeId, exhibitNumber: evidence.exhibitNumber, provenanceFingerprint: evidence.fingerprint });
+    setExhibitQrMessage(valid ? 'QR label matches this local evidence provenance record.' : 'QR label does not match this evidence record. Do not rely on it; check the source and audit ledger.');
+  };
+
+  const handleRecordExhibitMovement = async () => {
+    const evidenceNodeId = selectedNode?.data.evidence?.nodeId;
+    if (!evidenceNodeId) return;
+    try {
+      await recordExhibitMovement(evidenceNodeId, exhibitMovementType, exhibitFromLocation, exhibitToLocation, exhibitCustodian, exhibitReferenceNote);
+      setExhibitFromLocation(''); setExhibitToLocation(''); setExhibitCustodian(''); setExhibitReferenceNote('');
+      setExhibitMovementMessage('Exhibit movement recorded in the local custody ledger.');
+    } catch (error) {
+      setExhibitMovementMessage(error instanceof Error ? error.message : 'Exhibit movement could not be recorded.');
+    }
+  };
+
   const handleAddEvidenceDerivative = async () => {
     const evidenceNodeId = selectedNode?.data.evidence?.nodeId;
     if (!evidenceNodeId) return;
@@ -367,7 +469,8 @@ export const GraphWorkspaceScreen: React.FC = () => {
             <input value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Search entities, notes, evidence…" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[10px] text-white focus:border-[#55c987] focus:outline-none" />
             {caseSearch.trim().length > 0 && <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">{caseSearch.trim().length < 2 ? <p className="text-[9px] text-[#7880a0]">Enter at least two characters.</p> : caseSearchResults.length === 0 ? <p className="text-[9px] italic text-[#7880a0]">No local records match this query.</p> : caseSearchResults.map((result) => <button key={`${result.kind}:${result.id}`} onClick={() => openQualityRecord(result.id)} className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-left"><p className="text-[10px] font-bold text-[#dde1ec]">{result.title}</p><p className="mt-1 text-[9px] text-[#7880a0]">{result.kind} · {result.summary}</p></button>)}</div>}
           </div>
-          {canUpdateIntelligence && <button onClick={openSavedQueries} className="mt-3 w-full rounded border border-[#55c987] py-2 text-[10px] font-bold uppercase text-[#55c987]">Saved local queries</button>}
+          {canExportCase && <button onClick={openBriefingBuilder} className="mt-3 w-full rounded border border-[#d8c8ff] py-2 text-[10px] font-bold uppercase text-[#d8c8ff]">Reproducible briefing</button>}
+          {canUpdateIntelligence && <button onClick={openSavedQueries} className="mt-2 w-full rounded border border-[#55c987] py-2 text-[10px] font-bold uppercase text-[#55c987]">Saved local queries</button>}
           {canPlanCase && <button onClick={openPlaybook} className="mt-2 w-full rounded border border-[#3a7bd5] py-2 text-[10px] font-bold uppercase text-[#72a7f0]">Case playbook</button>}
           {(canCreateLead || canManageLeads) && <button onClick={openLeadRegister} className="mt-2 w-full rounded border border-[#f39c12] py-2 text-[10px] font-bold uppercase text-[#f7c86b]">Local lead register</button>}
           {(canMarkCase || canExportCase) && <button onClick={openDossierControls} className="mt-2 w-full rounded border border-[#b893e6] py-2 text-[10px] font-bold uppercase text-[#d8c8ff]">Dossier and marking controls</button>}
@@ -393,6 +496,8 @@ export const GraphWorkspaceScreen: React.FC = () => {
           </section>
         </div>
       )}
+
+      {isBriefingOpen && <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/80 p-4"><section role="dialog" aria-modal="true" aria-label="Reproducible briefing builder" className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-lg border border-[#d8c8ff] bg-[#14171f] p-5 shadow-2xl"><div className="mb-4 flex items-start justify-between gap-3 border-b border-[#252a3a] pb-3"><div><h2 className="text-sm font-bold uppercase tracking-widest text-[#d8c8ff]">Reproducible briefing</h2><p className="mt-1 text-[10px] leading-relaxed text-[#7880a0]">Select local records explicitly. The generated Markdown and digest are saved locally; this screen does not transmit or authorize dissemination.</p></div><button onClick={() => setIsBriefingOpen(false)} className="text-xs font-bold uppercase text-[#7880a0]">Close</button></div><div className="space-y-2"><input value={briefingTitle} onChange={(event) => setBriefingTitle(event.target.value)} maxLength={160} placeholder="Briefing title" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-xs text-white" /><textarea value={briefingPurpose} onChange={(event) => setBriefingPurpose(event.target.value)} maxLength={500} placeholder="Purpose and authorized use" className="min-h-16 w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-xs text-white" /><p className="text-[9px] font-bold uppercase text-[#7880a0]">Select intelligence records</p>{graphElements.filter((element) => !element.data.source && !element.data.target).map((node) => <label key={node.data.id} className="flex items-center gap-2 rounded border border-[#252a3a] p-2 text-[10px] text-[#dde1ec]"><input type="checkbox" checked={briefingNodeIds.includes(node.data.id)} onChange={() => toggleBriefingSelection(node.data.id, 'node')} /> {node.data.label} · {node.data.type}</label>)}<p className="mt-2 text-[9px] font-bold uppercase text-[#7880a0]">Select notes</p>{notes.map((note) => <label key={note.id} className="flex items-start gap-2 rounded border border-[#252a3a] p-2 text-[10px] text-[#dde1ec]"><input type="checkbox" checked={briefingNoteIds.includes(note.id)} onChange={() => toggleBriefingSelection(note.id, 'note')} /> {note.content.slice(0, 120)}</label>)}<button onClick={handleCreateBriefing} disabled={briefingTitle.trim().length < 3 || briefingPurpose.trim().length < 5 || (!briefingNodeIds.length && !briefingNoteIds.length)} className="w-full rounded bg-[#7c4dbb] py-2 text-[10px] font-bold uppercase text-white disabled:opacity-40">Build and record local briefing</button></div>{reproducibleBriefings.length > 0 && <div className="mt-4 border-t border-[#252a3a] pt-3"><p className="text-[9px] font-bold uppercase text-[#d8c8ff]">Recent local briefings</p>{reproducibleBriefings.slice(0, 3).map((briefing) => <article key={briefing.id} className="mt-2 rounded border border-[#454d66] bg-[#0c0e14] p-2"><p className="text-[10px] font-bold text-[#dde1ec]">{briefing.title}</p><p className="mt-1 break-all text-[8px] font-mono text-[#7880a0]">SHA-256: {briefing.contentDigest}</p><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-[9px] text-[#9aa3bb]">{briefing.markdownContent}</pre></article>)}</div>}{briefingMessage && <p role="status" className="mt-3 text-[10px] font-bold text-[#d8c8ff]">{briefingMessage}</p>}</section></div>}
 
       {isSavedQueriesOpen && (
         <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/80 p-4">
@@ -552,6 +657,14 @@ export const GraphWorkspaceScreen: React.FC = () => {
                 ].map(([label, value]) => <div key={label} className="flex justify-between items-start border-b border-[#252a3a]/50 pb-2"><span className="text-xs text-[#7880a0] font-bold">{label}</span><span className="text-xs text-[#dde1ec] text-right ml-4 break-words max-w-[60%] capitalize">{value}</span></div>)}
                 {selectedNode.data.evidence.chainOfCustody && <p className="text-[10px] text-[#9aa3bb] leading-relaxed pt-1">{selectedNode.data.evidence.chainOfCustody}</p>}
                 {selectedNode.data.evidence.attachmentUri && <div className="border border-[#1a8a4a]/50 rounded p-2 mt-2"><p className="text-[9px] text-[#55c987] uppercase font-bold mb-2">Captured attachment</p>{selectedAttachmentPreview && <img src={selectedAttachmentPreview} alt={selectedNode.data.evidence.attachmentName} className="w-full max-h-44 object-cover rounded border border-[#252a3a] mb-2" />}<p className="text-[10px] text-[#dde1ec] break-all">{selectedNode.data.evidence.attachmentName}</p><p className="text-[9px] text-[#7880a0] break-all font-mono mt-1">SHA-256: {selectedNode.data.evidence.attachmentDigest}</p></div>}
+                <section className="mt-3 space-y-3 rounded border border-[#55c987]/50 bg-[#0c0e14] p-3">
+                  <div><h5 className="text-[9px] font-bold uppercase tracking-widest text-[#55c987]">Offline exhibit label and custody</h5><p className="mt-1 text-[9px] leading-relaxed text-[#7880a0]">The QR label holds opaque local identifiers and this record’s provenance fingerprint. It is an offline lookup aid, not a transfer channel or authenticity conclusion.</p></div>
+                  <div className="grid grid-cols-[auto_1fr] gap-3 rounded border border-[#454d66] bg-[#14171f] p-2"><div className="flex h-24 w-24 items-center justify-center rounded bg-white p-1">{exhibitQrDataUrl ? <img src={exhibitQrDataUrl} alt={`Offline QR label for ${selectedNode.data.evidence.exhibitNumber}`} className="h-full w-full object-contain" /> : <span className="text-[9px] text-[#0c0e14]">Generating label…</span>}</div><div><p className="text-[10px] font-bold text-[#dde1ec]">Exhibit {selectedNode.data.evidence.exhibitNumber}</p><p className="mt-1 text-[9px] leading-relaxed text-[#7880a0]">Capture the printed label with an approved offline scanner or copy its payload into the verification field. A mismatch is a hard stop for that label, not evidence of tampering.</p></div></div>
+                  <div className="space-y-2"><input value={exhibitQrInput} onChange={(event) => setExhibitQrInput(event.target.value)} maxLength={2048} placeholder="Scan or paste CrimeGraph exhibit QR payload" className="w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-[10px] font-mono text-white focus:border-[#55c987] focus:outline-none" /><button onClick={handleVerifyExhibitQr} disabled={!exhibitQrInput.trim()} className="w-full rounded border border-[#55c987] py-2 text-[9px] font-bold uppercase text-[#55c987] disabled:opacity-40">Verify against this evidence record</button>{exhibitQrMessage && <p role="status" className="text-[10px] font-bold text-[#55c987]">{exhibitQrMessage}</p>}</div>
+                  <div className="border-t border-[#454d66] pt-3"><p className="mb-2 text-[9px] font-bold uppercase tracking-widest text-[#55c987]">Custody movements</p>{exhibitMovements.filter((movement) => movement.evidenceNodeId === selectedNode.data.evidence?.nodeId).length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No physical exhibit movement has been recorded.</p> : <div className="max-h-40 space-y-2 overflow-y-auto">{exhibitMovements.filter((movement) => movement.evidenceNodeId === selectedNode.data.evidence?.nodeId).map((movement) => <article key={movement.id} className="rounded border border-[#454d66] bg-[#14171f] p-2"><div className="flex justify-between gap-2"><span className="text-[10px] font-bold uppercase text-[#dde1ec]">{movement.movementType.replace('_', ' ')}</span><span className="text-[9px] text-[#7880a0]">{new Date(movement.createdAt).toLocaleString()}</span></div><p className="mt-1 text-[9px] text-[#9aa3bb]">{movement.fromLocation || 'Unstated location'} → {movement.toLocation || 'Unstated location'} · Custodian: {movement.custodian}</p>{movement.referenceNote && <p className="mt-1 text-[9px] text-[#dde1ec]">{movement.referenceNote}</p>}<p className="mt-1 text-[8px] font-mono text-[#5d6682]">Recorded by {movement.createdBy}</p></article>)}</div>}</div>
+                  {canMoveExhibits && <div className="space-y-2 border-t border-[#454d66] pt-3"><p className="text-[9px] leading-relaxed text-[#f7c86b]">Every physical movement requires high-risk reauthentication and appends an immutable local custody event.</p><select value={exhibitMovementType} onChange={(event) => setExhibitMovementType(event.target.value as typeof exhibitMovementType)} className="w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#55c987] focus:outline-none"><option value="sealed">Seal into storage</option><option value="checked_out">Check out</option><option value="returned">Return to storage</option><option value="disposed">Dispose with authorization</option></select><div className="grid grid-cols-2 gap-2"><input value={exhibitFromLocation} onChange={(event) => setExhibitFromLocation(event.target.value)} maxLength={240} placeholder="From location" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#55c987] focus:outline-none" /><input value={exhibitToLocation} onChange={(event) => setExhibitToLocation(event.target.value)} maxLength={240} placeholder="To location" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#55c987] focus:outline-none" /></div><input value={exhibitCustodian} onChange={(event) => setExhibitCustodian(event.target.value)} maxLength={120} placeholder="Responsible custodian *" className="w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#55c987] focus:outline-none" /><textarea value={exhibitReferenceNote} onChange={(event) => setExhibitReferenceNote(event.target.value)} maxLength={1200} placeholder="Reference, authorization, or handoff note" className="min-h-16 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#55c987] focus:outline-none" /><button onClick={handleRecordExhibitMovement} disabled={!exhibitCustodian.trim()} className="w-full rounded bg-[#1d9a6c] py-2 text-[9px] font-bold uppercase text-white disabled:opacity-40">Confirm and record movement</button></div>}
+                  {exhibitMovementMessage && <p role="status" className="text-[10px] font-bold text-[#55c987]">{exhibitMovementMessage}</p>}
+                </section>
                 <section className="mt-3 space-y-2 rounded border border-[#b893e6]/50 bg-[#0c0e14] p-3">
                   <div className="flex items-start justify-between gap-3"><div><h5 className="text-[9px] font-bold uppercase tracking-widest text-[#d8c8ff]">Derivative and annotation ledger</h5><p className="mt-1 text-[9px] leading-relaxed text-[#7880a0]">Operator-authored context only. These entries never modify the source evidence, attachment, provenance, or source digest.</p></div><span className="rounded border border-[#b893e6]/50 px-2 py-1 text-[9px] font-mono text-[#d8c8ff]">{evidenceDerivatives.filter((entry) => entry.parentNodeId === selectedNode.data.evidence?.nodeId).length}</span></div>
                   {evidenceDerivatives.filter((entry) => entry.parentNodeId === selectedNode.data.evidence?.nodeId).length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No operator-authored derivative or annotation records.</p> : <div className="max-h-48 space-y-2 overflow-y-auto">{evidenceDerivatives.filter((entry) => entry.parentNodeId === selectedNode.data.evidence?.nodeId).map((entry) => <article key={entry.id} className="rounded border border-[#454d66] bg-[#14171f] p-2"><div className="flex justify-between gap-2"><span className="text-[10px] font-bold text-[#dde1ec]">{entry.label}</span><span className="text-[9px] uppercase text-[#d8c8ff]">{entry.recordType.replace('_', ' ')}</span></div><p className="mt-1 whitespace-pre-wrap text-[10px] leading-relaxed text-[#9aa3bb]">{entry.annotationText}</p>{(entry.timecodeStartSeconds !== null || entry.timecodeEndSeconds !== null) && <p className="mt-1 text-[9px] font-mono text-[#7880a0]">Timecode: {entry.timecodeStartSeconds ?? '–'}s to {entry.timecodeEndSeconds ?? '–'}s</p>}<p className="mt-1 text-[9px] text-[#7880a0]">{entry.createdBy} · {new Date(entry.createdAt).toLocaleString()}</p><p className="mt-1 break-all text-[8px] font-mono text-[#5d6682]">Record SHA-256: {entry.recordDigest}</p></article>)}</div>}
@@ -561,6 +674,12 @@ export const GraphWorkspaceScreen: React.FC = () => {
                 <p className="text-[9px] text-[#7880a0] font-mono break-all">Fingerprint: {selectedNode.data.evidence.fingerprint}</p>
               </div>
             )}
+            <section className="mb-4 space-y-2 border-t border-[#72a7f0]/50 pt-4">
+              <div><h4 className="text-[10px] font-bold uppercase tracking-widest text-[#72a7f0]">Observation source and uncertainty</h4><p className="mt-1 text-[9px] leading-relaxed text-[#7880a0]">State how this record was obtained and the limits on time or location. These fields are not a score and do not change the intelligence confidence.</p></div>
+              {selectedObservationContext && <div className="rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[9px] text-[#9aa3bb]"><p>Last context update: {new Date(selectedObservationContext.updatedAt).toLocaleString()} · Initial record: {selectedObservationContext.createdBy}</p>{selectedObservationContext.latitude !== null && <p className="mt-1 font-mono">Coordinate: {selectedObservationContext.latitude}, {selectedObservationContext.longitude} · stated precision: {selectedObservationContext.locationPrecision}</p>}</div>}
+              {canUpdateIntelligence ? <div className="space-y-2 rounded border border-[#72a7f0]/40 bg-[#0c0e14] p-3"><div className="grid grid-cols-2 gap-2"><label className="text-[9px] font-bold uppercase text-[#7880a0]">Source basis<select value={observationSourceBasis} onChange={(event) => setObservationSourceBasis(event.target.value as typeof observationSourceBasis)} className="mt-1 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none"><option value="direct_observation">Direct observation</option><option value="source_report">Source report</option><option value="system_record">System record</option><option value="analyst_assessment">Analyst assessment</option></select></label><label className="text-[9px] font-bold uppercase text-[#7880a0]">Time precision<select value={observationTemporalPrecision} onChange={(event) => setObservationTemporalPrecision(event.target.value as typeof observationTemporalPrecision)} className="mt-1 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none"><option value="exact">Exact</option><option value="approximate">Approximate</option><option value="window">Time window</option><option value="unknown">Unknown</option></select></label></div><label className="block text-[9px] font-bold uppercase text-[#7880a0]">Location precision<select value={observationLocationPrecision} onChange={(event) => setObservationLocationPrecision(event.target.value as typeof observationLocationPrecision)} className="mt-1 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none"><option value="exact">Exact</option><option value="approximate">Approximate</option><option value="area">Area / vicinity</option><option value="unknown">Unknown / no coordinate</option></select></label><div className="grid grid-cols-3 gap-2"><input type="number" step="any" min="-90" max="90" value={observationLatitude} onChange={(event) => setObservationLatitude(event.target.value)} placeholder="Latitude" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none" /><input type="number" step="any" min="-180" max="180" value={observationLongitude} onChange={(event) => setObservationLongitude(event.target.value)} placeholder="Longitude" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none" /><input type="number" step="any" min="0" max="1000000" value={observationRadius} onChange={(event) => setObservationRadius(event.target.value)} placeholder="Radius m" className="rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none" /></div><textarea value={observationUncertaintyNote} onChange={(event) => setObservationUncertaintyNote(event.target.value)} maxLength={1200} placeholder="State the source limitation, coordinate origin, temporal window, or uncertainty; do not turn it into a conclusion." className="min-h-16 w-full rounded border border-[#454d66] bg-[#14171f] p-2 text-xs text-white focus:border-[#72a7f0] focus:outline-none" /><button onClick={handleSaveObservationContext} className="w-full rounded border border-[#72a7f0] py-2 text-[9px] font-bold uppercase text-[#72a7f0]">Save stated observation context</button></div> : <p className="rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[10px] italic text-[#7880a0]">Your role can review this context but cannot create or alter it.</p>}
+              {observationMessage && <p role="status" className="text-[10px] font-bold text-[#72a7f0]">{observationMessage}</p>}
+            </section>
             <div className="space-y-2 border-t border-[#252a3a] pt-4 mb-4">
               <h4 className="text-[10px] text-[#3a7bd5] uppercase font-bold tracking-widest mb-3">Entity Metadata</h4>
               {selectedNode.data.attributes && Object.keys(selectedNode.data.attributes).length > 0 ? (

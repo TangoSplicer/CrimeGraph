@@ -218,3 +218,64 @@ export const runExplainableLocalGraphQuery = (elements: GraphElement[], definiti
   }
   return results.sort((left, right) => left.kind.localeCompare(right.kind) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
 };
+
+
+export interface ObservationCorroborationSummary {
+  totalContexts: number;
+  exactSpatial: number;
+  approximateSpatial: number;
+  areaSpatial: number;
+  unknownSpatial: number;
+  exactTemporal: number;
+  approximateTemporal: number;
+  windowTemporal: number;
+  unknownTemporal: number;
+  findings: string[];
+}
+
+export function buildObservationCorroborationSummary(contexts: any[]): ObservationCorroborationSummary {
+  let exactSpatial = 0;
+  let approximateSpatial = 0;
+  let areaSpatial = 0;
+  let unknownSpatial = 0;
+  let exactTemporal = 0;
+  let approximateTemporal = 0;
+  let windowTemporal = 0;
+  let unknownTemporal = 0;
+  const findings: string[] = [];
+
+  for (const ctx of contexts) {
+    if (ctx.location_precision === 'exact') exactSpatial++;
+    else if (ctx.location_precision === 'approximate') approximateSpatial++;
+    else if (ctx.location_precision === 'area') areaSpatial++;
+    else unknownSpatial++;
+
+    if (ctx.temporal_precision === 'exact') exactTemporal++;
+    else if (ctx.temporal_precision === 'approximate') approximateTemporal++;
+    else if (ctx.temporal_precision === 'window') windowTemporal++;
+    else unknownTemporal++;
+  }
+
+  if (areaSpatial > 0) {
+    findings.push(`${areaSpatial} observation context(s) rely on broad area boundaries rather than exact coordinates.`);
+  }
+  if (windowTemporal > 0) {
+    findings.push(`${windowTemporal} observation context(s) use a temporal window rather than an exact timestamp.`);
+  }
+  if (unknownSpatial > 0 || unknownTemporal > 0) {
+    findings.push(`${unknownSpatial + unknownTemporal} observation context(s) have unstated spatial or temporal precision limits.`);
+  }
+
+  return {
+    totalContexts: contexts.length,
+    exactSpatial,
+    approximateSpatial,
+    areaSpatial,
+    unknownSpatial,
+    exactTemporal,
+    approximateTemporal,
+    windowTemporal,
+    unknownTemporal,
+    findings,
+  };
+}

@@ -9,7 +9,7 @@ describe('sync protocol validation', () => {
   it('computes a deterministic delta hash', async () => {
     const delta = {
       caseId: 'case-1', senderDeviceId: 'dev-1', senderFingerprint: 'fp-1', auditHeadHash: null,
-      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: '2026-08-16T12:00:00.000Z',
+      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: new Date().toISOString(),
     };
     const hash = await computeSyncDeltaHash(delta);
     expect(hash).toMatch(/^[a-f0-9]{64}$/);
@@ -18,7 +18,7 @@ describe('sync protocol validation', () => {
   it('validates a well-formed sync delta', async () => {
     const delta = {
       caseId: 'case-1', senderDeviceId: 'dev-1', senderFingerprint: 'fp-1', auditHeadHash: null,
-      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: '2026-08-16T12:00:00.000Z',
+      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: new Date().toISOString(),
     };
     const result = await validateSyncDelta(delta, 'fp-1');
     expect(result.valid).toBe(true);
@@ -28,7 +28,7 @@ describe('sync protocol validation', () => {
   it('rejects a delta with mismatched sender fingerprint', async () => {
     const delta = {
       caseId: 'case-1', senderDeviceId: 'dev-1', senderFingerprint: 'fp-1', auditHeadHash: null,
-      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: '2026-08-16T12:00:00.000Z',
+      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], timestamp: new Date().toISOString(),
     };
     const result = await validateSyncDelta(delta, 'fp-2');
     expect(result.valid).toBe(false);

@@ -52,6 +52,17 @@ export const validateSyncDelta = async (candidate: unknown, expectedSenderFinger
   if (expectedSenderFingerprint && payload.senderFingerprint !== expectedSenderFingerprint) {
     errors.push('Sync delta sender fingerprint does not match the trusted peer registration.');
   }
+
+  // Freshness check: within 5 minutes
+  if (typeof payload.timestamp === 'string') {
+    const deltaMs = Math.abs(Date.now() - new Date(payload.timestamp).getTime());
+    if (isNaN(deltaMs) || deltaMs > 5 * 60 * 1000) {
+      errors.push('Sync delta timestamp is outside the acceptable 5-minute freshness window.');
+    }
+  } else {
+    errors.push('Sync delta timestamp is missing or invalid.');
+  }
+
   if (!Array.isArray(payload.nodes)) errors.push('Sync delta nodes collection is malformed.');
   if (!Array.isArray(payload.edges)) errors.push('Sync delta edges collection is malformed.');
   if (!Array.isArray(payload.notes)) errors.push('Sync delta notes collection is malformed.');

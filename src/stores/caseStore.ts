@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Capacitor } from '@capacitor/core';
-import { destroyProtectedLocalStorage, getDb } from '../capacitor/db';
+import { destroyProtectedLocalStorage, getDb, withDatabaseTransaction } from '../capacitor/db';
 import { Share } from '@capacitor/share';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { useAuthStore } from './authStore';
@@ -209,17 +209,8 @@ export const validateImportedPackage = (candidate: unknown) => {
   return { reference, title, classification, nodes, relationships, notes };
 };
 
-const withTransaction = async <T>(db: any, operation: () => Promise<T>): Promise<T> => {
-  await db.execute('BEGIN IMMEDIATE;');
-  try {
-    const result = await operation();
-    await db.execute('COMMIT;');
-    return result;
-  } catch (error) {
-    try { await db.execute('ROLLBACK;'); } catch { /* Transaction was not opened or has already been closed. */ }
-    throw error;
-  }
-};
+const withTransaction = async <T>(db: any, operation: () => Promise<T>): Promise<T> =>
+  withDatabaseTransaction(db, async () => operation());
 
 export const migrateLegacyEvidenceAttachments = async (db: any, records: any[]): Promise<void> => {
   if (!Capacitor.isNativePlatform()) return;

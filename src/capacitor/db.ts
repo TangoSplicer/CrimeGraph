@@ -77,6 +77,85 @@ export async function getDb() {
 // Retained as the explicit bootstrap entry point for callers outside the store layer.
 export const initDatabase = getDb;
 
+/**
+ * Executes an operation inside a connection-scoped transaction. Native Android
+ * connections use the bridge lifecycle APIs rather than raw BEGIN/COMMIT SQL;
+ * this prevents the bridge from losing transaction state between calls.
+ */
+export async function withDatabaseTransaction<T>(db: any, operation: (transactionDb: any) => Promise<T>): Promise<T> {
+  const usesNativeLifecycle = typeof db.beginTransaction === 'function';
+  const begin = usesNativeLifecycle
+    ? () => db.beginTransaction()
+    : () => db.execute('BEGIN IMMEDIATE;', false);
+  const commit = usesNativeLifecycle
+    ? () => db.commitTransaction()
+    : () => db.execute('COMMIT;', false);
+  const rollback = usesNativeLifecycle
+    ? () => db.rollbackTransaction()
+    : () => db.execute('ROLLBACK;', false);
+
+  // Capacitor SQLite's run/execute methods default `transaction` to true. When
+  // a caller has already opened a native transaction, that default starts and
+  // closes a nested bridge transaction, invalidating the outer context. The
+  // proxy pins all write calls to `transaction = false` for this scope. Capture
+  // the bound methods first so callers can safely use the scope with legacy
+  // callbacks whose shared connection is temporarily wrapped.
+  const run = typeof db.run === 'function' ? db.run.bind(db) : undefined;
+  const execute = typeof db.execute === 'function' ? db.execute.bind(db) : undefined;
+  const executeSet = typeof db.executeSet === 'function' ? db.executeSet.bind(db) : undefined;
+  const transactionDb = new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === 'run') {
+        return (statement: string, values?: any[], _transaction = false, returnMode = 'no', isSQL92 = true) => {
+          if (!run) throw new Error('Database connection does not provide run().');
+          return run(statement, values, false, returnMode, isSQL92);
+        };
+      }
+      if (property === 'execute') {
+        return (statements: string, _transaction = false, isSQL92 = true) => {
+          if (!execute) throw new Error('Database connection does not provide execute().');
+          return execute(statements, false, isSQL92);
+        };
+      }
+      if (property === 'executeSet') {
+        return (set: any[], _transaction = false, returnMode = 'no', isSQL92 = true) => {
+          if (!executeSet) throw new Error('Database connection does not provide executeSet().');
+          return executeSet(set, false, returnMode, isSQL92);
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+
+  const originalRun = db.run;
+  const originalExecute = db.execute;
+  const originalExecuteSet = db.executeSet;
+  const restoreBaseWrites = () => {
+    db.run = originalRun;
+    db.execute = originalExecute;
+    if (typeof originalExecuteSet === 'function') db.executeSet = originalExecuteSet;
+  };
+
+  await begin();
+  try {
+    // Preserve compatibility with established store callbacks that close over
+    // `db` rather than accepting the scoped argument. This is intentionally
+    // limited to the active explicit transaction and restored before commit.
+    db.run = transactionDb.run;
+    db.execute = transactionDb.execute;
+    if (typeof originalExecuteSet === 'function') db.executeSet = transactionDb.executeSet;
+    const result = await operation(transactionDb);
+    restoreBaseWrites();
+    await commit();
+    return result;
+  } catch (error) {
+    restoreBaseWrites();
+    try { await rollback(); } catch { /* Preserve the initial operation failure. */ }
+    throw error;
+  }
+}
+
 export async function destroyProtectedLocalStorage(): Promise<void> {
   try {
     if (dbInstance) await dbInstance.close();
@@ -171,6 +250,20 @@ async function initialiseDatabase() {
         verified_at TEXT,
         last_seen_at TEXT,
         notes TEXT
+      );
+      CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id TEXT PRIMARY KEY,
+        case_id TEXT NOT NULL,
+        peer_fingerprint TEXT NOT NULL,
+        record_type TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        local_payload TEXT NOT NULL,
+        incoming_payload TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'resolved_local', 'resolved_incoming')),
+        created_at TEXT NOT NULL,
+        resolved_by TEXT,
+        resolved_at TEXT,
+        FOREIGN KEY(case_id) REFERENCES cases(id)
       );
       CREATE TABLE IF NOT EXISTS evidence_provenance (
         id TEXT PRIMARY KEY,

@@ -3,9 +3,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getDb: vi.fn(),
   appendAuditEntry: vi.fn(),
+  withDatabaseTransaction: vi.fn(async (db: unknown, operation: (transactionDb: unknown) => Promise<unknown>) => operation(db)),
 }));
 
-vi.mock('../capacitor/db', () => ({ getDb: mocks.getDb }));
+vi.mock('../capacitor/db', () => ({ getDb: mocks.getDb, withDatabaseTransaction: mocks.withDatabaseTransaction }));
 vi.mock('../utils/auditLedger', () => ({ appendAuditEntry: mocks.appendAuditEntry }));
 
 import { useAuthStore } from './authStore';

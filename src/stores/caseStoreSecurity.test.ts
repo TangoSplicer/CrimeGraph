@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   filesystem: { readFile: vi.fn(), deleteFile: vi.fn() },
   getDb: vi.fn(),
   destroyProtectedLocalStorage: vi.fn(),
+  withDatabaseTransaction: vi.fn(async (db: unknown, operation: (transactionDb: unknown) => Promise<unknown>) => operation(db)),
   writeEncryptedEvidenceMedia: vi.fn(),
   requireHighRiskReauthentication: vi.fn(),
   appendAuditEntry: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock('@capacitor/share', () => ({
 vi.mock('../capacitor/db', () => ({
   getDb: mocks.getDb,
   destroyProtectedLocalStorage: mocks.destroyProtectedLocalStorage,
+  withDatabaseTransaction: mocks.withDatabaseTransaction,
 }));
 
 vi.mock('../utils/secureMedia', () => ({

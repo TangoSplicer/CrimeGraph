@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getDb } from '../capacitor/db';
+import { getDb, withDatabaseTransaction } from '../capacitor/db';
 import { useAuthStore } from './authStore';
 import { assertPermission } from '../utils/permissions';
 import { appendAuditEntry } from '../utils/auditLedger';
@@ -110,9 +110,8 @@ export const usePairingStore = create<PairingState>((set, get) => ({
       notes: null,
     };
 
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run(
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run(
         `INSERT INTO trusted_peers (peer_id, display_name, public_key, fingerprint, status, invitation_expires_at, paired_at, verified_at, last_seen_at, notes)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(fingerprint) DO UPDATE SET
@@ -122,12 +121,8 @@ export const usePairingStore = create<PairingState>((set, get) => ({
            status = CASE WHEN trusted_peers.status = 'verified' THEN 'verified' WHEN trusted_peers.status = 'revoked' THEN 'revoked' ELSE 'pending' END`,
         [peer.peer_id, peer.display_name, peer.public_key, peer.fingerprint, peer.status, peer.invitation_expires_at, peer.paired_at, peer.verified_at, peer.last_seen_at, peer.notes],
       );
-      await appendAuditEntry(db, 'IMPORT_PAIRING_INVITATION', peer.peer_id, `Imported signed pairing invitation for ${peer.display_name}; verification is ${peer.status}.`, currentOperator());
-      await db.execute('COMMIT;');
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original import failure. */ }
-      throw error;
-    }
+      await appendAuditEntry(transactionDb, 'IMPORT_PAIRING_INVITATION', peer.peer_id, `Imported signed pairing invitation for ${peer.display_name}; verification is ${peer.status}.`, currentOperator());
+    });
 
     const resolvedPeer: TrustedPeer = { ...peer, status: peer.status };
     set({ peers: [resolvedPeer, ...get().peers.filter((item) => item.fingerprint !== resolvedPeer.fingerprint)], pendingVerification: { peer: resolvedPeer, shortAuthenticationCode } });
@@ -144,15 +139,10 @@ export const usePairingStore = create<PairingState>((set, get) => ({
     if (!peer) throw new Error('The pairing record could not be found.');
     if (peer.status === 'revoked') throw new Error('A revoked device cannot be verified without a new pairing process.');
 
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE trusted_peers SET status = ?, verified_at = ? WHERE peer_id = ?', ['verified', now, peerId]);
-      await appendAuditEntry(db, 'VERIFY_PEER_DEVICE', peerId, `Verified device ${peer.display_name} after human comparison of the short authentication code.`, currentOperator());
-      await db.execute('COMMIT;');
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original verification failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE trusted_peers SET status = ?, verified_at = ? WHERE peer_id = ?', ['verified', now, peerId]);
+      await appendAuditEntry(transactionDb, 'VERIFY_PEER_DEVICE', peerId, `Verified device ${peer.display_name} after human comparison of the short authentication code.`, currentOperator());
+    });
     set({ peers: get().peers.map((item) => item.peer_id === peerId ? { ...item, status: 'verified', verified_at: now } : item), pendingVerification: null });
   },
 
@@ -164,15 +154,10 @@ export const usePairingStore = create<PairingState>((set, get) => ({
     const peer = result.values?.[0];
     if (!peer) throw new Error('The pairing record could not be found.');
 
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE trusted_peers SET status = ? WHERE peer_id = ?', ['revoked', peerId]);
-      await appendAuditEntry(db, 'REVOKE_PEER_DEVICE', peerId, `Revoked offline trust for device ${peer.display_name}.`, currentOperator());
-      await db.execute('COMMIT;');
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original revocation failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE trusted_peers SET status = ? WHERE peer_id = ?', ['revoked', peerId]);
+      await appendAuditEntry(transactionDb, 'REVOKE_PEER_DEVICE', peerId, `Revoked offline trust for device ${peer.display_name}.`, currentOperator());
+    });
     set({ peers: get().peers.map((item) => item.peer_id === peerId ? { ...item, status: 'revoked' } : item), pendingVerification: get().pendingVerification?.peer.peer_id === peerId ? null : get().pendingVerification });
   },
 

@@ -7,6 +7,7 @@ import { usePairingStore } from '../stores/pairingStore';
 import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { collectDeviceAssurance, formatBytes, type DeviceAssuranceSnapshot } from '../utils/deviceAssurance';
+import { requestRoleWalkthrough } from '../utils/roleWalkthrough';
 
 export const SettingsScreen: React.FC = () => {
   const { currentUser, logout, addOperator, operators, loadOperators, disableOperator, reinstateOperator, resetOperatorPin, changeOperatorRole } = useAuthStore();
@@ -215,7 +216,10 @@ export const SettingsScreen: React.FC = () => {
             <span className="text-[10px] bg-[#3a7bd5] text-white px-2 py-1 rounded font-mono">{currentUser?.badge}</span>
           </div>
           <p className="text-[10px] text-[#7880a0] uppercase tracking-widest mb-4">Clearance: {currentUser?.role}</p>
-          <button onClick={logout} className="w-full py-3 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase hover:bg-[#252a3a]">Terminate Session</button>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={requestRoleWalkthrough} className="min-h-11 border border-[#3a7bd5] text-[#72a7f0] rounded text-xs font-bold uppercase hover:bg-[#3a7bd5]/10">Open role guide</button>
+            <button onClick={logout} className="min-h-11 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase hover:bg-[#252a3a]">Terminate Session</button>
+          </div>
         </section>
 
         {canViewDeviceAssurance && (
@@ -241,13 +245,17 @@ export const SettingsScreen: React.FC = () => {
         )}
 
         {/* TACTICAL MESH NETWORK (DARK SYNC) - AVAILABLE TO ALL OPERATORS */}
-        <section className="bg-[#1c2030] border border-[#2ecc71] rounded-lg p-4">
-          <div className="flex justify-between items-end border-b border-[#2ecc71]/30 pb-2 mb-4">
-            <h2 className="text-xs font-bold text-[#2ecc71] uppercase tracking-widest">Tactical Mesh Discovery</h2>
-            <span className={`text-[9px] px-2 py-1 rounded ${isHardwareReady ? 'bg-[#2ecc71]/20 text-[#2ecc71]' : 'bg-[#7880a0]/20 text-[#7880a0]'}`}>
-              {isHardwareReady ? 'HARDWARE ONLINE' : 'OFFLINE'}
-            </span>
-          </div>
+          <section className="bg-[#1c2030] border border-[#2ecc71] rounded-lg p-4">
+            <div className="flex justify-between items-end border-b border-[#2ecc71]/30 pb-2 mb-4">
+              <h2 className="text-xs font-bold text-[#2ecc71] uppercase tracking-widest">Tactical Mesh & Sync Conflicts</h2>
+              <span className={`text-[9px] px-2 py-1 rounded ${isScanning ? 'bg-[#2ecc71] text-[#0c0e14]' : isHardwareReady ? 'bg-[#2ecc71]/20 text-[#2ecc71]' : 'bg-[#c0392b]/20 text-[#ff9d95]'}`}>
+                {isScanning ? 'DISCOVERY ACTIVE' : isHardwareReady ? 'READY — IDLE' : 'INACTIVE'}
+              </span>
+            </div>
+            <div className="mb-4 space-y-2">
+              <p className="text-[10px] text-[#7880a0]">Concurrent offline sync edits populate encrypted conflict records for supervisor review. Discovery exposes only a generic local beacon and never transfers case material.</p>
+              {transferStatus && <p role="status" className={`rounded border p-3 text-[10px] leading-relaxed ${transferStatus.startsWith('TACTICAL MESH INACTIVE') || transferStatus.includes('not active') || transferStatus.includes('error') ? 'border-[#c0392b]/60 bg-[#c0392b]/10 text-[#ffb0aa]' : isScanning ? 'border-[#2ecc71]/60 bg-[#2ecc71]/10 text-[#8be3b8]' : 'border-[#2ecc71]/30 bg-[#0c0e14] text-[#b4c3d1]'}`}>{transferStatus}</p>}
+            </div>
 
           {!isHardwareReady ? (
             <button onClick={initializeMesh} className="w-full py-3 bg-[#2ecc71]/10 border border-[#2ecc71] text-[#2ecc71] rounded text-xs font-bold uppercase hover:bg-[#2ecc71]/20 transition-colors">
@@ -284,7 +292,6 @@ export const SettingsScreen: React.FC = () => {
               {isScanning && discoveredPeers.length === 0 && (
                 <p className="text-[10px] text-[#2ecc71] italic text-center animate-pulse mt-2">Scanning for nearby radio devices. No intelligence is transferred.</p>
               )}
-              {transferStatus && <p className="text-[10px] text-[#7880a0] mt-3 leading-relaxed">{transferStatus}</p>}
             </div>
           )}
         </section>

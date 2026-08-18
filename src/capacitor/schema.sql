@@ -204,6 +204,20 @@ CREATE TABLE IF NOT EXISTS trusted_peers (
   last_seen_at TEXT,
   notes TEXT
 );
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL,
+  peer_fingerprint TEXT NOT NULL,
+  record_type TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  local_payload TEXT NOT NULL,
+  incoming_payload TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'resolved_local', 'resolved_incoming')),
+  created_at TEXT NOT NULL,
+  resolved_by TEXT,
+  resolved_at TEXT,
+  FOREIGN KEY(case_id) REFERENCES cases(id)
+);
 
 CREATE TABLE IF NOT EXISTS evidence_provenance (
   id TEXT PRIMARY KEY,

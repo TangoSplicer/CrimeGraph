@@ -7,6 +7,7 @@ import { AddNodeScreen } from './screens/AddNodeScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { SupervisorReviewScreen } from './screens/SupervisorReviewScreen';
 import { AuthScreen } from './screens/AuthScreen';
+import { RoleWalkthrough } from './components/RoleWalkthrough';
 import { useAuthStore } from './stores/authStore';
 
 const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -51,6 +52,7 @@ export const App: React.FC = () => {
 
   return (
     <Router>
+      <RoleWalkthrough user={currentUser} />
       <Routes>
         <Route path="/" element={<DashboardScreen />} />
         <Route path="/workspace" element={<GraphWorkspaceScreen />} />

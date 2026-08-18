@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { getDb } from '../capacitor/db';
+import { getDb, withDatabaseTransaction } from '../capacitor/db';
 import { hashPassword, verifyPassword } from '../capacitor/crypto';
 import { assertPermission, isUserRole, type UserRole } from '../utils/permissions';
 import { appendAuditEntry } from '../utils/auditLedger';
@@ -238,25 +238,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!isManageableRole(role)) throw new Error('Select a valid operational role.');
 
     const db = await getDb();
+    const existingBadge = await db.query('SELECT id FROM users WHERE badge = ? COLLATE NOCASE LIMIT 1', [cleanBadge]);
+    if (existingBadge.values?.length) throw new Error(`Badge ${cleanBadge} is already provisioned on this device. Choose a different badge ID.`);
     const id = window.crypto?.randomUUID ? `user_${window.crypto.randomUUID()}` : `user_${Date.now()}`;
     const now = new Date().toISOString();
     const operator: OperatorRecord = {
       id, badge: cleanBadge, name: cleanName, role, status: 'active', biometricEnabled: false,
       createdAt: now, lastLogin: null, credentialsUpdatedAt: now, disabledAt: null, disabledBy: null, disabledReason: null,
     };
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run(
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run(
         'INSERT INTO users (id, badge, name, hash, role, status, biometric_enabled, created_at, credentials_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [id, cleanBadge, cleanName, await hashPassword(pin), role, 'active', 0, now, now],
       );
-      await appendAuditEntry(db, 'PROVISION_OPERATOR', id, `Provisioned ${role} operator ${cleanBadge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
-      await db.execute('COMMIT;');
-      set((state) => ({ operators: [...state.operators.filter((existing) => existing.id !== id), operator].sort((a, b) => a.badge.localeCompare(b.badge)) }));
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original provisioning failure. */ }
-      throw error;
-    }
+      await appendAuditEntry(transactionDb, 'PROVISION_OPERATOR', id, `Provisioned ${role} operator ${cleanBadge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+    });
+    set((state) => ({ operators: [...state.operators.filter((existing) => existing.id !== id), operator].sort((a, b) => a.badge.localeCompare(b.badge)) }));
   },
 
   disableOperator: async (operatorId: string, reason: string) => {
@@ -269,16 +266,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (existing.status === 'disabled') throw new Error('Operator is already disabled.');
 
     const now = new Date().toISOString();
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE users SET status = ?, disabled_at = ?, disabled_by = ?, disabled_reason = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', ['disabled', now, get().currentUser?.badge || 'SYSTEM_UNKNOWN', cleanReason, operatorId]);
-      await appendAuditEntry(db, 'DISABLE_OPERATOR', operatorId, `Disabled ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
-      await db.execute('COMMIT;');
-      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'disabled', biometricEnabled: false, lastLogin: null, disabledAt: now, disabledBy: get().currentUser?.badge || 'SYSTEM_UNKNOWN', disabledReason: cleanReason }) }));
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE users SET status = ?, disabled_at = ?, disabled_by = ?, disabled_reason = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', ['disabled', now, get().currentUser?.badge || 'SYSTEM_UNKNOWN', cleanReason, operatorId]);
+      await appendAuditEntry(transactionDb, 'DISABLE_OPERATOR', operatorId, `Disabled ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+    });
+    set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'disabled', biometricEnabled: false, lastLogin: null, disabledAt: now, disabledBy: get().currentUser?.badge || 'SYSTEM_UNKNOWN', disabledReason: cleanReason }) }));
   },
 
   reinstateOperator: async (operatorId: string, reason: string) => {
@@ -290,16 +282,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!existing) throw new Error('Operator record was not found.');
     if (existing.status !== 'disabled') throw new Error('Only disabled operators can be reinstated.');
 
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE users SET status = ?, disabled_at = NULL, disabled_by = NULL, disabled_reason = NULL, biometric_enabled = 0 WHERE id = ?', ['active', operatorId]);
-      await appendAuditEntry(db, 'REINSTATE_OPERATOR', operatorId, `Reinstated ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
-      await db.execute('COMMIT;');
-      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'active', biometricEnabled: false, disabledAt: null, disabledBy: null, disabledReason: null }) }));
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE users SET status = ?, disabled_at = NULL, disabled_by = NULL, disabled_reason = NULL, biometric_enabled = 0 WHERE id = ?', ['active', operatorId]);
+      await appendAuditEntry(transactionDb, 'REINSTATE_OPERATOR', operatorId, `Reinstated ${existing.badge}: ${cleanReason}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+    });
+    set((state) => ({ operators: replaceOperator(state.operators, { ...existing, status: 'active', biometricEnabled: false, disabledAt: null, disabledBy: null, disabledReason: null }) }));
   },
 
   resetOperatorPin: async (operatorId: string, pin: string) => {
@@ -312,16 +299,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (existing.status !== 'active') throw new Error('Reinstate the operator before resetting their PIN.');
 
     const now = new Date().toISOString();
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE users SET hash = ?, biometric_enabled = 0, last_login = NULL, credentials_updated_at = ? WHERE id = ?', [await hashPassword(pin), now, operatorId]);
-      await appendAuditEntry(db, 'RESET_OPERATOR_PIN', operatorId, `Reset PIN and revoked biometric sign-in for ${existing.badge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
-      await db.execute('COMMIT;');
-      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, biometricEnabled: false, lastLogin: null, credentialsUpdatedAt: now }) }));
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE users SET hash = ?, biometric_enabled = 0, last_login = NULL, credentials_updated_at = ? WHERE id = ?', [await hashPassword(pin), now, operatorId]);
+      await appendAuditEntry(transactionDb, 'RESET_OPERATOR_PIN', operatorId, `Reset PIN and revoked biometric sign-in for ${existing.badge}`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+    });
+    set((state) => ({ operators: replaceOperator(state.operators, { ...existing, biometricEnabled: false, lastLogin: null, credentialsUpdatedAt: now }) }));
   },
 
   changeOperatorRole: async (operatorId: string, role: ManageableRole) => {
@@ -333,16 +315,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!existing) throw new Error('Operator record was not found.');
     if (existing.role === role) throw new Error('The operator already has that role.');
 
-    await db.execute('BEGIN IMMEDIATE;');
-    try {
-      await db.run('UPDATE users SET role = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', [role, operatorId]);
-      await appendAuditEntry(db, 'CHANGE_OPERATOR_ROLE', operatorId, `Changed ${existing.badge} role from ${existing.role} to ${role}; biometric sign-in revoked`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
-      await db.execute('COMMIT;');
-      set((state) => ({ operators: replaceOperator(state.operators, { ...existing, role, biometricEnabled: false, lastLogin: null }) }));
-    } catch (error) {
-      try { await db.execute('ROLLBACK;'); } catch { /* Preserve the original lifecycle failure. */ }
-      throw error;
-    }
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE users SET role = ?, biometric_enabled = 0, last_login = NULL WHERE id = ?', [role, operatorId]);
+      await appendAuditEntry(transactionDb, 'CHANGE_OPERATOR_ROLE', operatorId, `Changed ${existing.badge} role from ${existing.role} to ${role}; biometric sign-in revoked`, get().currentUser?.badge || 'SYSTEM_UNKNOWN');
+    });
+    set((state) => ({ operators: replaceOperator(state.operators, { ...existing, role, biometricEnabled: false, lastLogin: null }) }));
   },
 
   logout: () => set({ currentUser: null, operators: [], intentionalBackground: false }),

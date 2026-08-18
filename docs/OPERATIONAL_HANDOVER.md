@@ -26,6 +26,20 @@ A supervisor opens **REVIEW** in the bottom navigation. The inbox presents only 
 
 A field operator sees pending, approved, or returned state in the graph workspace. A returned record displays the supervisor’s correction feedback. Only the originating field operator can use **Correct & resubmit**; this clears the previous decision state and returns the record to `pending` for a fresh supervisory decision.
 
+## First-time role guide
+
+After a successful first sign-in, CrimeGraph presents a local, role-specific walkthrough. Completion is stored only on that device and is keyed to the individual local user profile; it does not change permissions, create a record in case data, suppress re-authentication, or transmit any telemetry. The guide can be reopened from **SETTINGS → Active operator → Open role guide**.
+
+| Role | First-time guide focus |
+|---|---|
+| Administrator | Device commissioning, master-password separation, least-privilege operator provisioning, audit-ledger review, and high-risk reauthentication. |
+| Supervisor | Casework, explainable analysis, field assignment, pending-submission review, correction feedback, and controlled local collaboration. |
+| Analyst | Casework, explainable analysis, source-aware documentation, field assignment/tasking, and coordination with a supervisor for submission review. |
+| Field operator | Locally assigned cases only, contextual observation/evidence capture, pending-review submission, returned-record correction, and task outcomes. |
+| Read-only operator | Inspection of permitted local intelligence, preservation of source and uncertainty context, and escalation of required changes to an authorized user. |
+
+The walkthrough reinforces that Tactical Mesh discovery is a proximity-only beacon feature. It neither exchanges case material nor authorizes synchronization. Its closing step directs every role to **Settings** only; it does not imply that users without the corresponding permission can access review, audit, or device-assurance controls. Users must complete their organization’s approved device and access training; the guide is an in-app orientation, not a substitute for that process.
+
 ## Operator lifecycle and field assignment
 
 An administrator opens **SETTINGS** and uses **Operator lifecycle** to list locally provisioned non-administrator accounts. Disablement and reinstatement require a reason; PIN resets and role changes revoke biometric sign-in. Every lifecycle action requires high-risk confirmation and creates a hash-linked audit entry. A disabled account cannot use PIN or biometric sign-in.

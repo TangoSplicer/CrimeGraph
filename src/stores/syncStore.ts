@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { getDb } from '../capacitor/db';
+import { getDb, withDatabaseTransaction } from '../capacitor/db';
+import { MeshNetwork } from '../capacitor/mesh';
 import { getDeviceIdentity, signWithDeviceIdentity, verifyDeviceSignature } from '../capacitor/deviceIdentity';
 import { validateSyncDelta, type SyncDeltaPayload } from '../utils/syncProtocol';
 import { appendAuditEntry } from '../utils/auditLedger';
@@ -20,8 +21,23 @@ export interface TrustedPeer {
   notes: string;
 }
 
+export interface SyncConflict {
+  id: string;
+  caseId: string;
+  peerFingerprint: string;
+  recordType: 'node' | 'edge' | 'note';
+  recordId: string;
+  localPayload: any;
+  incomingPayload: any;
+  status: 'pending' | 'resolved_local' | 'resolved_incoming';
+  createdAt: string;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+}
+
 interface SyncState {
   peers: TrustedPeer[];
+  conflicts: SyncConflict[];
   activePeer: TrustedPeer | null;
   isSyncing: boolean;
   syncLog: string[];
@@ -30,6 +46,8 @@ interface SyncState {
   discoveredPeers: Array<{ deviceId: string; name: string; rssi: number }>;
   transferStatus: string | null;
   loadPeers: () => Promise<void>;
+  loadConflicts: (caseId: string) => Promise<void>;
+  resolveConflict: (conflictId: string, resolution: 'resolved_local' | 'resolved_incoming') => Promise<void>;
   registerPeer: (displayName: string, publicKey: string, fingerprint: string, notes?: string) => Promise<TrustedPeer>;
   verifyPeer: (fingerprint: string) => Promise<void>;
   revokePeer: (fingerprint: string) => Promise<void>;
@@ -42,16 +60,57 @@ interface SyncState {
 
 export const useSyncStore = create<SyncState>((set, get) => ({
   peers: [],
+  conflicts: [],
   activePeer: null,
   isSyncing: false,
   syncLog: [],
   isScanning: false,
-  isHardwareReady: true,
+  isHardwareReady: false,
   discoveredPeers: [],
-  transferStatus: 'Secure peer-to-peer sync engine ready.',
-  initializeMesh: async () => {},
-  startDiscovery: async () => {},
-  stopDiscovery: async () => {},
+  transferStatus: 'Tactical Mesh radio is not initialized. Discovery never transfers case intelligence.',
+  initializeMesh: async () => {
+    set({ isHardwareReady: false, isScanning: false, transferStatus: 'TACTICAL MESH INITIALIZING — requesting local Bluetooth LE access…', discoveredPeers: [] });
+    try {
+      await MeshNetwork.initializeHardware();
+      set({
+        isHardwareReady: true,
+        isScanning: false,
+        transferStatus: 'TACTICAL MESH READY — local beacon advertising is active. Start discovery to scan for nearby CrimeGraph beacons; no case intelligence is transferred.',
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Tactical Mesh radio initialization failed.';
+      set({ isHardwareReady: false, isScanning: false, transferStatus: `TACTICAL MESH INACTIVE — ${detail}` });
+    }
+  },
+  startDiscovery: async () => {
+    if (!get().isHardwareReady) {
+      set({ transferStatus: 'Initialize the Tactical Mesh radio before starting discovery.' });
+      return;
+    }
+    set({ isScanning: true, discoveredPeers: [], transferStatus: 'Scanning locally for CrimeGraph peer beacons. No case intelligence is transferred.' });
+    try {
+      await MeshNetwork.startTacticalScan((device) => {
+        if (!device?.deviceId) return;
+        const peer = { deviceId: String(device.deviceId), name: String(device.name || 'Operator Node'), rssi: Number.isFinite(Number(device.rssi)) ? Number(device.rssi) : 0 };
+        set((state) => ({
+          discoveredPeers: [peer, ...state.discoveredPeers.filter((existing) => existing.deviceId !== peer.deviceId)],
+          transferStatus: `Found local peer beacon: ${peer.name}. Discovery does not exchange or authorize intelligence.`,
+        }));
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Tactical Mesh discovery could not start.';
+      set({ isScanning: false, transferStatus: `TACTICAL MESH READY — discovery is not active. ${detail}` });
+    }
+  },
+  stopDiscovery: async () => {
+    try {
+      await MeshNetwork.stopTacticalScan();
+      set({ isScanning: false, transferStatus: 'Local Tactical Mesh discovery stopped. No intelligence was transferred.' });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Tactical Mesh discovery could not stop cleanly.';
+      set({ isScanning: false, transferStatus: `TACTICAL MESH READY — scan stop reported an error: ${detail}` });
+    }
+  },
 
   loadPeers: async () => {
     try {
@@ -74,6 +133,73 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     } catch (error) {
       console.warn('Failed to load trusted peers.', error);
     }
+  },
+
+  loadConflicts: async (caseId: string) => {
+    try {
+      const db = await getDb();
+      const response = await db.query('SELECT * FROM sync_conflicts WHERE case_id = ? ORDER BY created_at DESC', [caseId]);
+      set({
+        conflicts: (response.values || []).map((row: any): SyncConflict => ({
+          id: String(row.id),
+          caseId: String(row.case_id),
+          peerFingerprint: String(row.peer_fingerprint),
+          recordType: row.record_type as 'node' | 'edge' | 'note',
+          recordId: String(row.record_id),
+          localPayload: JSON.parse(row.local_payload),
+          incomingPayload: JSON.parse(row.incoming_payload),
+          status: row.status as 'pending' | 'resolved_local' | 'resolved_incoming',
+          createdAt: String(row.created_at),
+          resolvedBy: row.resolved_by ? String(row.resolved_by) : null,
+          resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
+        })),
+      });
+    } catch (error) {
+      console.warn('Failed to load sync conflicts.', error);
+    }
+  },
+
+  resolveConflict: async (conflictId: string, resolution: 'resolved_local' | 'resolved_incoming') => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    const operator = currentOperator();
+
+    const resolvedCaseId = await withDatabaseTransaction(db, async () => {
+      const res = await db.query('SELECT * FROM sync_conflicts WHERE id = ?', [conflictId]);
+      const conflict = res.values?.[0];
+      if (!conflict) throw new Error('Conflict not found.');
+
+      if (resolution === 'resolved_incoming') {
+        const payload = JSON.parse(conflict.incoming_payload);
+        if (conflict.record_type === 'node') {
+          await db.run(
+            'INSERT OR REPLACE INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [payload.id, payload.case_id, payload.label, payload.type, payload.confidence || 3, payload.created_at, payload.occurred_at || null, payload.attributes || null, payload.review_status || 'not_required']
+          );
+        } else if (conflict.record_type === 'edge') {
+          await db.run(
+            'INSERT OR REPLACE INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [payload.id, payload.case_id, payload.source, payload.target, payload.label, payload.created_at]
+          );
+        } else if (conflict.record_type === 'note') {
+          await db.run(
+            'INSERT OR REPLACE INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)',
+            [payload.id, payload.case_id, payload.content, payload.linked_nodes || '[]', payload.created_at]
+          );
+        }
+      }
+
+      await db.run(
+        'UPDATE sync_conflicts SET status = ?, resolved_by = ?, resolved_at = ? WHERE id = ?',
+        [resolution, operator, now, conflictId]
+      );
+
+      await appendAuditEntry(db, 'RESOLVE_SYNC_CONFLICT', conflict.case_id, `Resolved sync conflict for ${conflict.record_type}:${conflict.record_id} with strategy: ${resolution}`, operator);
+      return String(conflict.case_id);
+    });
+
+    await get().loadConflicts(resolvedCaseId);
+    await useCaseStore.getState().loadGraphElements(resolvedCaseId);
   },
 
   registerPeer: async (displayName, publicKey, fingerprint, notes = '') => {
@@ -172,35 +298,66 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       if (!signatureValid) throw new Error('Sync delta cryptographic signature verification failed.');
 
       const db = await getDb();
-      await db.execute('BEGIN IMMEDIATE;');
-      try {
+      await withDatabaseTransaction(db, async () => {
         for (const node of delta.nodes as any[]) {
-          await db.run(
-            'INSERT OR IGNORE INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [node.id, node.case_id, node.label, node.type, node.confidence || 3, node.created_at, node.occurred_at || null, node.attributes || null, node.review_status || 'not_required']
-          );
+          const existing = await db.query('SELECT * FROM nodes WHERE id = ?', [node.id]);
+          if (existing.values && existing.values.length > 0) {
+            const local = existing.values[0];
+            if (local.label !== node.label || local.type !== node.type || (local.attributes || '') !== (node.attributes || '')) {
+              const conflictId = `conf_${Math.random().toString(36).substring(2, 11)}`;
+              await db.run(
+                'INSERT INTO sync_conflicts (id, case_id, peer_fingerprint, record_type, record_id, local_payload, incoming_payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [conflictId, delta.caseId, peer.fingerprint, 'node', node.id, JSON.stringify(local), JSON.stringify(node), 'pending', new Date().toISOString()]
+              );
+            }
+          } else {
+            await db.run(
+              'INSERT INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [node.id, node.case_id, node.label, node.type, node.confidence || 3, node.created_at, node.occurred_at || null, node.attributes || null, node.review_status || 'not_required']
+            );
+          }
         }
         for (const edge of delta.edges as any[]) {
-          await db.run(
-            'INSERT OR IGNORE INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [edge.id, edge.case_id, edge.source, edge.target, edge.label, edge.created_at]
-          );
+          const existing = await db.query('SELECT * FROM edges WHERE id = ?', [edge.id]);
+          if (existing.values && existing.values.length > 0) {
+            const local = existing.values[0];
+            if (local.label !== edge.label || local.source !== edge.source || local.target !== edge.target) {
+              const conflictId = `conf_${Math.random().toString(36).substring(2, 11)}`;
+              await db.run(
+                'INSERT INTO sync_conflicts (id, case_id, peer_fingerprint, record_type, record_id, local_payload, incoming_payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [conflictId, delta.caseId, peer.fingerprint, 'edge', edge.id, JSON.stringify(local), JSON.stringify(edge), 'pending', new Date().toISOString()]
+              );
+            }
+          } else {
+            await db.run(
+              'INSERT OR IGNORE INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+              [edge.id, edge.case_id, edge.source, edge.target, edge.label, edge.created_at]
+            );
+          }
         }
         for (const note of delta.notes as any[]) {
-          await db.run(
-            'INSERT OR IGNORE INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)',
-            [note.id, note.case_id, note.content, note.linked_nodes || '[]', note.created_at]
-          );
+          const existing = await db.query('SELECT * FROM notes WHERE id = ?', [note.id]);
+          if (existing.values && existing.values.length > 0) {
+            const local = existing.values[0];
+            if (local.content !== note.content) {
+              const conflictId = `conf_${Math.random().toString(36).substring(2, 11)}`;
+              await db.run(
+                'INSERT INTO sync_conflicts (id, case_id, peer_fingerprint, record_type, record_id, local_payload, incoming_payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [conflictId, delta.caseId, peer.fingerprint, 'note', note.id, JSON.stringify(local), JSON.stringify(note), 'pending', new Date().toISOString()]
+              );
+            }
+          } else {
+            await db.run(
+              'INSERT OR IGNORE INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)',
+              [note.id, note.case_id, note.content, note.linked_nodes || '[]', note.created_at]
+            );
+          }
         }
 
         await appendAuditEntry(db, 'SYNC_INBOUND_DELTA', delta.caseId, `Successfully synchronized local delta from peer ${peer.displayName} (${peer.fingerprint})`, currentOperator());
-        await db.execute('COMMIT;');
-        set((state) => ({ syncLog: [`[${new Date().toISOString()}] Synced case ${delta.caseId} from ${peer.displayName}`, ...state.syncLog] }));
-        await useCaseStore.getState().loadGraphElements(delta.caseId);
-      } catch (err) {
-        try { await db.execute('ROLLBACK;'); } catch {}
-        throw err;
-      }
+      });
+      set((state) => ({ syncLog: [`[${new Date().toISOString()}] Synced case ${delta.caseId} from ${peer.displayName}`, ...state.syncLog] }));
+      await useCaseStore.getState().loadGraphElements(delta.caseId);
     } finally {
       set({ isSyncing: false });
     }

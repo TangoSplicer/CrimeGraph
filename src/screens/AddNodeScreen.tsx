@@ -62,6 +62,8 @@ export const AddNodeScreen: React.FC = () => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureMessage, setCaptureMessage] = useState('');
   const [evidenceTemplateId, setEvidenceTemplateId] = useState('');
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deployMessage, setDeployMessage] = useState('');
   const selectedEvidenceTemplate = findEvidenceIntakeTemplate(evidenceTemplateId);
 
   useEffect(() => {
@@ -117,26 +119,34 @@ export const AddNodeScreen: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!label.trim()) return;
-    
+    if (!label.trim() || isDeploying) return;
+
     const attrRecord: Record<string, string> = {};
     attributes.forEach(attr => {
       if (attr.key.trim() && attr.value.trim()) attrRecord[attr.key.trim()] = attr.value.trim();
     });
 
-    await addNode(selectedType, label.trim(), confidence, attrRecord, selectedType === 'evidence' ? evidence : undefined, occurredAt);
-    navigate('/workspace');
+    setIsDeploying(true);
+    setDeployMessage('');
+    try {
+      await addNode(selectedType, label.trim(), confidence, attrRecord, selectedType === 'evidence' ? evidence : undefined, occurredAt);
+      navigate('/workspace');
+    } catch (error) {
+      setDeployMessage(error instanceof Error ? error.message : 'The node could not be deployed. No intelligence record was created.');
+    } finally {
+      setIsDeploying(false);
+    }
   };
 
   return (
-    <div className="h-screen bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe">
+    <div className="h-screen bg-[#0c0e14] text-[#dde1ec] flex flex-col pt-safe pb-safe">
       <div className="flex items-center justify-between p-4 bg-[#14171f] border-b border-[#252a3a] shrink-0">
         <h1 className="text-lg font-bold">Add Intelligence Node</h1>
         <button onClick={() => navigate('/workspace')} className="text-[#7880a0] font-bold text-sm">CANCEL</button>
       </div>
 
-      {/* The form container handles all the scrolling natively now */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-6">
         {isFieldOperator && <div className="border border-[#f39c12]/50 bg-[#f39c12]/10 rounded-lg p-3"><p className="text-xs font-bold text-[#f7c86b] uppercase tracking-wide">Field submission protocol</p><p className="mt-1 text-[10px] text-[#dde1ec]">This observation will be marked <strong>pending review</strong> after submission. Any return-for-correction comment will be visible in the graph workspace.</p></div>}
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-3 tracking-wider">Entity Type</label>
@@ -229,13 +239,14 @@ export const AddNodeScreen: React.FC = () => {
           </div>
         </section>
 
-        {/* 🚀 THE FIX: Button moved inside the scroll flow */}
-        <div className="pt-6 pb-8">
-          <button onClick={handleSubmit} disabled={!label.trim()} className="w-full py-4 bg-[#3a7bd5] hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] text-white font-bold rounded text-lg transition-colors shadow-[0_0_15px_rgba(58,123,213,0.3)] disabled:shadow-none">
-            {isFieldOperator ? 'Submit for supervisor review' : 'Deploy Node'}
+        </div>
+        <div className="shrink-0 border-t border-[#252a3a] bg-[#14171f] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {deployMessage && <p role="alert" className="mb-3 rounded border border-[#c0392b]/70 bg-[#c0392b]/10 p-3 text-xs leading-relaxed text-[#ffb0aa]">{deployMessage}</p>}
+          <button type="submit" disabled={!label.trim() || isDeploying} className="min-h-12 w-full rounded bg-[#3a7bd5] py-3 text-base font-bold text-white shadow-[0_0_15px_rgba(58,123,213,0.3)] transition-colors hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] disabled:shadow-none">
+            {isDeploying ? 'Deploying node…' : isFieldOperator ? 'Submit for supervisor review' : 'Deploy Node'}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 };

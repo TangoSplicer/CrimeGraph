@@ -283,7 +283,7 @@ export const SettingsScreen: React.FC = () => {
 
           {!isHardwareReady ? (
             <button onClick={initializeMesh} className="w-full py-3 bg-[#2ecc71]/10 border border-[#2ecc71] text-[#2ecc71] rounded text-xs font-bold uppercase hover:bg-[#2ecc71]/20 transition-colors">
-              Initialize Radio Hardware
+              {(transferStatus || '').toLowerCase().includes('permission') || (transferStatus || '').toLowerCase().includes('denied') ? 'Grant Nearby Devices Access and Retry' : 'Initialize Radio Hardware'}
             </button>
           ) : (
             <div className="space-y-4">

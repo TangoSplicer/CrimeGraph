@@ -20,7 +20,7 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, title
       
       {/* Sheet Container */}
       <div 
-        className={`fixed inset-x-0 bottom-0 z-50 bg-[#14171f] rounded-t-2xl transform transition-transform duration-300 ease-in-out border-t border-[#252a3a] flex flex-col max-h-[85vh] ${
+        className={`fixed inset-x-0 bottom-0 z-50 bg-[#14171f] rounded-t-2xl transform transition-transform duration-300 ease-in-out border-t border-[#252a3a] flex flex-col max-h-[calc(100dvh-1rem-env(safe-area-inset-bottom))] ${
           isOpen ? 'translate-y-0' : 'translate-y-full'
         }`}
       >
@@ -35,8 +35,8 @@ export const BottomSheet: React.FC<BottomSheetProps> = ({ isOpen, onClose, title
           </button>
         </div>
         
-        {/* 🚀 FIXED: Content Area is now scrollable with extra bottom padding for mobile safe areas */}
-        <div className="p-4 overflow-y-auto pb-safe-offset-12 pb-12">
+        {/* The scroll area reserves room for Android gesture/navigation controls. */}
+        <div className="p-4 overflow-y-auto pb-safe-action">
           {children}
         </div>
       </div>

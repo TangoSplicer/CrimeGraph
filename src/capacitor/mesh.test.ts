@@ -68,3 +68,49 @@ describe('Tactical Mesh Bluetooth LE adapter', () => {
     await expect(MeshNetwork.startTacticalScan(() => undefined)).rejects.toThrow('permission denied');
   });
 });
+
+
+describe('Tactical Mesh Android permission preflight', () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
+  });
+
+  afterEach(() => {
+    delete (globalThis as typeof globalThis & { bluetoothle?: unknown }).bluetoothle;
+  });
+
+  it('requests scan, connect, and advertise access sequentially before starting the local beacon', async () => {
+    const requested: string[] = [];
+    const adapter = {
+      hasPermissionBtScan: vi.fn((success: (value: unknown) => void) => success({ hasPermission: false })),
+      requestPermissionBtScan: vi.fn((success: (value: unknown) => void) => { requested.push('scan'); success({ requestPermission: true }); }),
+      hasPermissionBtConnect: vi.fn((success: (value: unknown) => void) => success({ hasPermission: false })),
+      requestPermissionBtConnect: vi.fn((success: (value: unknown) => void) => { requested.push('connect'); success({ requestPermission: true }); }),
+      hasPermissionBtAdvertise: vi.fn((success: (value: unknown) => void) => success({ hasPermission: false })),
+      requestPermissionBtAdvertise: vi.fn((success: (value: unknown) => void) => { requested.push('advertise'); success({ requestPermission: true }); }),
+      initialize: vi.fn((success: (value: unknown) => void) => success({ status: 'enabled' })),
+      initializePeripheral: vi.fn((success: (value: unknown) => void) => success({ status: 'enabled' })),
+      addService: vi.fn((success: () => void) => success()),
+      startAdvertising: vi.fn((success: () => void) => success()),
+    };
+    (globalThis as typeof globalThis & { bluetoothle?: unknown }).bluetoothle = adapter;
+
+    await expect(MeshNetwork.initializeHardware()).resolves.toBeUndefined();
+
+    expect(requested).toEqual(['scan', 'connect', 'advertise']);
+    expect(adapter.initialize).toHaveBeenCalledOnce();
+    expect(adapter.startAdvertising).toHaveBeenCalledOnce();
+  });
+
+  it('stops before radio initialization and gives Android Settings guidance when Nearby Devices permission is denied', async () => {
+    const initialize = vi.fn();
+    (globalThis as typeof globalThis & { bluetoothle?: unknown }).bluetoothle = {
+      hasPermissionBtScan: vi.fn((success: (value: unknown) => void) => success({ hasPermission: false })),
+      requestPermissionBtScan: vi.fn((success: (value: unknown) => void) => success({ requestPermission: false })),
+      initialize,
+    };
+
+    await expect(MeshNetwork.initializeHardware()).rejects.toThrow('Bluetooth scanning permission was denied. Grant Nearby devices permission in Android Settings, then retry.');
+    expect(initialize).not.toHaveBeenCalled();
+  });
+});

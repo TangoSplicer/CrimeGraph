@@ -19,6 +19,51 @@ const describeNativeError = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
+const ensureBlePermission = async (adapter: any, checkMethod: string, requestMethod: string, label: string): Promise<void> => {
+  if (typeof adapter?.[checkMethod] !== 'function' || typeof adapter?.[requestMethod] !== 'function') return;
+
+  const call = (method: string): Promise<any> => new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      callback();
+    };
+    const timeout = window.setTimeout(() => finish(() => reject(new Error(`${label} permission request timed out. Check Android Settings → Apps → CrimeGraph → Permissions → Nearby devices, then retry.`))), OPERATION_TIMEOUT_MS);
+    try {
+      adapter[method]((result: any) => finish(() => resolve(result)), (error: unknown) => finish(() => reject(error)));
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+
+  let state: any;
+  try {
+    state = await call(checkMethod);
+  } catch (error) {
+    throw new Error(`${label} permission status could not be read: ${describeNativeError(error, 'Bluetooth bridge error')}.`);
+  }
+  if (state?.hasPermission === true || state?.requestPermission === true) return;
+
+  let granted: any;
+  try {
+    granted = await call(requestMethod);
+  } catch (error) {
+    throw new Error(`${label} permission request failed: ${describeNativeError(error, 'radio access was denied')}. Grant Nearby devices permission in Android Settings, then retry.`);
+  }
+  if (granted?.hasPermission === true || granted?.requestPermission === true) return;
+  throw new Error(`${label} permission was denied. Grant Nearby devices permission in Android Settings, then retry.`);
+};
+
+const ensureTacticalMeshPermissions = async (adapter: any): Promise<void> => {
+  // The Cordova bridge exposes separate runtime permission methods. Requests must
+  // be sequential because the bridge holds one active permission callback.
+  await ensureBlePermission(adapter, 'hasPermissionBtScan', 'requestPermissionBtScan', 'Bluetooth scanning');
+  await ensureBlePermission(adapter, 'hasPermissionBtConnect', 'requestPermissionBtConnect', 'Bluetooth connection');
+  await ensureBlePermission(adapter, 'hasPermissionBtAdvertise', 'requestPermissionBtAdvertise', 'Bluetooth advertising');
+};
+
 export const MeshNetwork = {
   /**
    * Starts the local BLE presence service. It exposes only a CrimeGraph service
@@ -27,6 +72,8 @@ export const MeshNetwork = {
   initializeHardware: async (): Promise<void> => {
     const adapter = getAdapter();
     if (!adapter) throw new Error('Tactical Mesh is unavailable because the Bluetooth LE bridge is not loaded. Install the current Android build.');
+
+    await ensureTacticalMeshPermissions(adapter);
 
     return new Promise((resolve, reject) => {
       let settled = false;

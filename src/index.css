@@ -49,6 +49,15 @@
   .bottom-safe-nav {
     bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
   }
+
+  .pb-safe-action {
+    padding-bottom: max(3rem, calc(0.75rem + env(safe-area-inset-bottom, 0px)));
+  }
+
+  .p-safe-modal {
+    padding: 1rem;
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
 }
 
 

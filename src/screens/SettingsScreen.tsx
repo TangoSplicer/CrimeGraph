@@ -8,9 +8,10 @@ import { BottomTabBar } from '../components/layout/BottomTabBar';
 import { requireHighRiskReauthentication } from '../utils/highRiskAuth';
 import { collectDeviceAssurance, formatBytes, type DeviceAssuranceSnapshot } from '../utils/deviceAssurance';
 import { requestRoleWalkthrough } from '../utils/roleWalkthrough';
+import { authenticateWithBiometrics, isBiometricAvailable } from '../capacitor/biometrics';
 
 export const SettingsScreen: React.FC = () => {
-  const { currentUser, logout, addOperator, operators, loadOperators, disableOperator, reinstateOperator, resetOperatorPin, changeOperatorRole } = useAuthStore();
+  const { currentUser, logout, addOperator, operators, loadOperators, disableOperator, reinstateOperator, resetOperatorPin, changeOperatorRole, setBiometricPreference } = useAuthStore();
   const { wipeDatabase, auditLogs, auditVerification, loadAuditLogs } = useCaseStore();
   
   const {
@@ -57,6 +58,8 @@ export const SettingsScreen: React.FC = () => {
   const [deviceAssurance, setDeviceAssurance] = useState<DeviceAssuranceSnapshot | null>(null);
   const [deviceAssuranceMsg, setDeviceAssuranceMsg] = useState('');
   const [isLoadingDeviceAssurance, setIsLoadingDeviceAssurance] = useState(false);
+  const [biometricPreferenceMsg, setBiometricPreferenceMsg] = useState('');
+  const [isUpdatingBiometricPreference, setIsUpdatingBiometricPreference] = useState(false);
 
   useEffect(() => {
     if (currentUser?.role === 'admin') {
@@ -86,6 +89,26 @@ export const SettingsScreen: React.FC = () => {
       setDeviceAssuranceMsg(error instanceof Error ? error.message : 'Device assurance state could not be inspected.');
     } finally {
       setIsLoadingDeviceAssurance(false);
+    }
+  };
+
+  const handleBiometricPreference = async (enabled: boolean) => {
+    if (!currentUser || currentUser.role === 'admin') return;
+    setIsUpdatingBiometricPreference(true);
+    setBiometricPreferenceMsg('');
+    try {
+      if (enabled) {
+        if (!await isBiometricAvailable()) throw new Error('Strong biometrics are unavailable or not enrolled on this device.');
+        if (!await authenticateWithBiometrics('Confirm strong biometric enrolment for CrimeGraph')) throw new Error('Strong biometric confirmation is required to enable this preference.');
+      } else {
+        await requireHighRiskReauthentication('Confirm disabling strong biometric protection');
+      }
+      await setBiometricPreference(enabled);
+      setBiometricPreferenceMsg(enabled ? 'Strong biometric confirmation is enabled for this operator.' : 'Biometric confirmation and biometric sign-in are disabled for this operator.');
+    } catch (error) {
+      setBiometricPreferenceMsg(error instanceof Error ? error.message : 'Biometric preference could not be updated.');
+    } finally {
+      setIsUpdatingBiometricPreference(false);
     }
   };
 
@@ -216,6 +239,7 @@ export const SettingsScreen: React.FC = () => {
             <span className="text-[10px] bg-[#3a7bd5] text-white px-2 py-1 rounded font-mono">{currentUser?.badge}</span>
           </div>
           <p className="text-[10px] text-[#7880a0] uppercase tracking-widest mb-4">Clearance: {currentUser?.role}</p>
+          {currentUser?.role !== 'admin' && <div className="mb-4 rounded border border-[#454d66] bg-[#0c0e14] p-3"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-[#dde1ec]">Strong biometrics</p><p className="mt-1 text-[10px] leading-relaxed text-[#9aa3bb]">{currentUser?.biometricEnabled ? 'Enabled for biometric sign-in and high-risk confirmation on this device.' : 'Disabled. PIN reauthentication remains available for sensitive actions.'}</p></div><button onClick={() => void handleBiometricPreference(!currentUser?.biometricEnabled)} disabled={isUpdatingBiometricPreference} className={`shrink-0 rounded border px-3 py-2 text-[10px] font-bold uppercase disabled:opacity-40 ${currentUser?.biometricEnabled ? 'border-[#c0392b] text-[#ff9d95]' : 'border-[#1d9a6c] text-[#8be3b8]'}`}>{isUpdatingBiometricPreference ? 'Updating…' : currentUser?.biometricEnabled ? 'Disable' : 'Enable'}</button></div>{biometricPreferenceMsg && <p role="status" className={`mt-2 text-[10px] leading-relaxed ${biometricPreferenceMsg.includes('enabled') ? 'text-[#8be3b8]' : 'text-[#f7c86b]'}`}>{biometricPreferenceMsg}</p>}</div>}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={requestRoleWalkthrough} className="min-h-11 border border-[#3a7bd5] text-[#72a7f0] rounded text-xs font-bold uppercase hover:bg-[#3a7bd5]/10">Open role guide</button>
             <button onClick={logout} className="min-h-11 border border-[#454d66] text-[#dde1ec] rounded text-xs font-bold uppercase hover:bg-[#252a3a]">Terminate Session</button>

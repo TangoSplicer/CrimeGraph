@@ -10,6 +10,7 @@ import { can } from '../utils/permissions';
 import { buildGraphInsights, runExplainableLocalGraphQuery, searchCaseContent, type ExplainableGraphQueryResult } from '../utils/graphInsights';
 import { readEncryptedEvidenceMedia } from '../utils/secureMedia';
 import { buildExhibitQrPayload, renderExhibitQrDataUrl, verifyExhibitQrReference } from '../utils/exhibitQr';
+import { buildCaseReadiness } from '../utils/caseReadiness';
 
 const entityTypes = ['person', 'vehicle', 'phone', 'location', 'event', 'digital_account', 'organisation', 'evidence'];
 
@@ -20,6 +21,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
     connectingFromId, setConnectingFromId, deleteNode, deleteEdge, updateNode, // 🚀 NEW updateNode
     activeCaseId, cases, exportActiveCase, hiddenNodeTypes, toggleFilter,
     notes, addNote, deleteNote, dataMarkings, disclosureRecords, loadDataMarkings, addDataMarking, removeDataMarking, loadDisclosureRecords,
+    fieldTasks, loadFieldTasks,
     playbookMilestones, loadPlaybookMilestones, createPlaybookMilestone, updatePlaybookMilestone,
     caseLeads, loadCaseLeads, createCaseLead, updateCaseLead, promoteCaseLead,
     evidenceDerivatives, loadEvidenceDerivatives, addEvidenceDerivative,
@@ -103,6 +105,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
   const activeCase = cases.find(c => c.id === activeCaseId);
   const graphInsights = buildGraphInsights(graphElements, notes);
   const caseSearchResults = searchCaseContent(graphElements, notes, caseSearch);
+  const caseReadiness = buildCaseReadiness({ graphElements, notes, milestones: playbookMilestones, leads: caseLeads, fieldTasks });
   const canCreateIntelligence = can(currentUser?.role, 'intelligence:create');
   const canUpdateIntelligence = can(currentUser?.role, 'intelligence:update');
   const canDeleteIntelligence = can(currentUser?.role, 'intelligence:delete');
@@ -243,6 +246,17 @@ export const GraphWorkspaceScreen: React.FC = () => {
     setDossierMessage('');
     if (canMarkCase) loadDataMarkings(activeCaseId).catch((error) => setDossierMessage(error instanceof Error ? error.message : 'Markings are unavailable.'));
     if (canExportCase) loadDisclosureRecords(activeCaseId).catch((error) => setDossierMessage(error instanceof Error ? error.message : 'Disclosure history is unavailable.'));
+  };
+
+  const toggleAnalysis = () => {
+    const opening = !isAnalysisOpen;
+    setIsAnalysisOpen(opening);
+    setIsNotesOpen(false);
+    setIsFilterOpen(false);
+    if (opening && activeCaseId) {
+      Promise.all([loadPlaybookMilestones(activeCaseId), loadCaseLeads(activeCaseId), loadFieldTasks(activeCaseId)])
+        .catch((error) => setWorkspaceMessage(error instanceof Error ? error.message : 'Case workflow readiness is unavailable.'));
+    }
   };
 
   const openPlaybook = () => {
@@ -418,7 +432,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
           <p className="text-[10px] text-[#7880a0] truncate w-32">{activeCase.title}</p>
         </div>
         <div className="flex items-center space-x-2">
-          <button onClick={() => { setIsAnalysisOpen(!isAnalysisOpen); setIsNotesOpen(false); setIsFilterOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isAnalysisOpen ? 'bg-[#2ecc71] text-[#0c0e14] border-[#2ecc71]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>ANALYSIS</button>
+          <button onClick={toggleAnalysis} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isAnalysisOpen ? 'bg-[#2ecc71] text-[#0c0e14] border-[#2ecc71]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>ANALYSIS</button>
           <button onClick={() => { setIsNotesOpen(!isNotesOpen); setIsFilterOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${isNotesOpen ? 'bg-[#f39c12] text-white border-[#f39c12]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>LOG ({notes.length})</button>
           <button onClick={() => { setIsFilterOpen(!isFilterOpen); setIsNotesOpen(false); setIsAnalysisOpen(false); }} className={`text-[10px] font-bold px-2 py-1 rounded border transition-colors ${hiddenNodeTypes.length > 0 ? 'bg-[#e74c3c] text-white border-[#e74c3c]' : 'border-[#454d66] text-[#dde1ec] bg-[#252a3a]'}`}>FILTERS {hiddenNodeTypes.length > 0 && `(${hiddenNodeTypes.length})`}</button>
           <button onClick={exportActiveCase} disabled={!canExportCase} className="text-[10px] font-bold px-2 py-1 rounded border border-[#3a7bd5] text-[#3a7bd5] hover:bg-[#3a7bd5] hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed">EXPORT</button>
@@ -464,6 +478,7 @@ export const GraphWorkspaceScreen: React.FC = () => {
             <p className="mb-2 text-[9px] font-bold uppercase text-[#55c987]">Explainable quality workbench</p>
             <div className="space-y-2">{graphInsights.qualityFindings.length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No configured quality cues are present.</p> : graphInsights.qualityFindings.map((finding) => <button key={finding.id} onClick={() => openQualityRecord(finding.affectedIds[0])} className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-left"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-[#dde1ec]">{finding.title}</span><span className={`text-[9px] font-bold uppercase ${finding.severity === 'attention' ? 'text-[#f7c86b]' : 'text-[#72a7f0]'}`}>{finding.severity}</span></div><p className="mt-1 text-[9px] leading-relaxed text-[#9aa3bb]">{finding.explanation}</p></button>)}</div>
           </div>
+          <div className="mt-3 border-t border-[#252a3a] pt-2"><div className="flex items-center justify-between gap-2"><p className="text-[9px] font-bold uppercase text-[#72a7f0]">Case readiness cues</p><span className="text-[9px] text-[#7880a0]">{caseReadiness.attentionCount} attention · {caseReadiness.informationCount} information</span></div><p className="mt-1 text-[9px] leading-relaxed text-[#7880a0]">Local workflow state only. This is not a score, ranking, prediction, or recommendation.</p><div className="mt-2 space-y-1">{caseReadiness.findings.length === 0 ? <p className="text-[10px] italic text-[#7880a0]">No configured readiness cues are present.</p> : caseReadiness.findings.map((finding) => <article key={finding.id} className="rounded border border-[#454d66] bg-[#0c0e14] p-2"><div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold text-[#dde1ec]">{finding.title}</span><span className={`text-[9px] font-bold uppercase ${finding.severity === 'attention' ? 'text-[#f7c86b]' : 'text-[#72a7f0]'}`}>{finding.severity}</span></div><p className="mt-1 text-[9px] leading-relaxed text-[#9aa3bb]">{finding.explanation}</p></article>)}</div></div>
           <div className="mt-3 border-t border-[#252a3a] pt-2">
             <label className="mb-1 block text-[9px] font-bold uppercase text-[#55c987]">Local case search</label>
             <input value={caseSearch} onChange={(event) => setCaseSearch(event.target.value)} placeholder="Search entities, notes, evidence…" className="w-full rounded border border-[#454d66] bg-[#0c0e14] p-2 text-[10px] text-white focus:border-[#55c987] focus:outline-none" />

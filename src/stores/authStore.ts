@@ -37,6 +37,7 @@ interface AuthState {
   reinstateOperator: (operatorId: string, reason: string) => Promise<void>;
   resetOperatorPin: (operatorId: string, pin: string) => Promise<void>;
   changeOperatorRole: (operatorId: string, role: ManageableRole) => Promise<void>;
+  setBiometricPreference: (enabled: boolean) => Promise<void>;
   logout: () => void;
 }
 
@@ -121,13 +122,8 @@ const verifyAndUpgradeCredential = async (db: any, user: any, secret: string): P
   return isValid;
 };
 
-const updateLastLogin = async (db: any, userId: string, biometricEnabled = false): Promise<void> => {
-  const now = new Date().toISOString();
-  if (biometricEnabled) {
-    await db.run('UPDATE users SET last_login = ?, biometric_enabled = 1 WHERE id = ?', [now, userId]);
-  } else {
-    await db.run('UPDATE users SET last_login = ? WHERE id = ?', [now, userId]);
-  }
+const updateLastLogin = async (db: any, userId: string): Promise<void> => {
+  await db.run('UPDATE users SET last_login = ? WHERE id = ?', [new Date().toISOString(), userId]);
 };
 
 const replaceOperator = (operators: OperatorRecord[], updated: OperatorRecord): OperatorRecord[] =>
@@ -177,9 +173,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = result.values?.[0];
       if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, pin)) return false;
 
-      await updateLastLogin(db, user.id, true);
+      await updateLastLogin(db, user.id);
       localStorage.setItem('crimegraph_last_user', user.badge);
-      set({ currentUser: { ...user, biometricEnabled: true } as User });
+      set({ currentUser: { ...user, biometricEnabled: Number(user.biometric_enabled || 0) === 1 } as User });
       return true;
     } catch (error) {
       console.error('Operator sign-in failed.', error);
@@ -219,6 +215,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.error('Administrator sign-in failed.', error);
       return false;
     }
+  },
+
+  setBiometricPreference: async (enabled) => {
+    const currentUser = get().currentUser;
+    if (!currentUser) throw new Error('An active operator session is required.');
+    if (currentUser.role === 'admin') throw new Error('Administrator biometric sign-in is not available.');
+
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await withDatabaseTransaction(db, async (transactionDb) => {
+      await transactionDb.run('UPDATE users SET biometric_enabled = ?, last_login = ? WHERE id = ?', [enabled ? 1 : 0, now, currentUser.id]);
+      await appendAuditEntry(transactionDb, enabled ? 'ENABLE_BIOMETRIC_PREFERENCE' : 'DISABLE_BIOMETRIC_PREFERENCE', currentUser.id, enabled ? `Enabled strong biometric confirmation for ${currentUser.badge}` : `Disabled biometric confirmation for ${currentUser.badge}`, currentUser.badge);
+    });
+    if (enabled) localStorage.setItem('crimegraph_last_user', currentUser.badge);
+    else localStorage.removeItem('crimegraph_last_user');
+    set((state) => ({ currentUser: state.currentUser ? { ...state.currentUser, biometricEnabled: enabled } : null }));
   },
 
   loadOperators: async () => {

@@ -35,12 +35,13 @@ The Android workflow runs on pushes and pull requests targeting `main` and `mast
 
 ## Mandatory device acceptance
 
-Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACCEPTANCE.md) before authorizing distribution. Its mandatory checks include encrypted first-run commissioning, restart persistence, secure operator lifecycle actions, assigned field queues and task cards, case-playbook and local-lead controls, source-preserving evidence-derivative records, explainable saved local graph queries, guided evidence intake and protected camera capture, offline QR exhibit labels and custody controls, stated observation-context limits, forensic dossier v4 integrity, reproducible briefing digests, review/resubmission, session locks, verified pairing, secure wipe, backup/transfer exclusion, and the native device assurance report.
+Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACCEPTANCE.md) and its companion [Physical-Device Testing and Commissioning Guide](./PHYSICAL_DEVICE_TESTING_AND_COMMISSIONING_GUIDE.md) before authorizing distribution. The companion guide defines the mandatory device matrix, evidence-pack record, expanded PT-01 to PT-34 procedures, accessibility checks, explicit biometric preference checks, explainable case-readiness checks, and release-blocking failure categories. The combined protocols cover encrypted first-run commissioning, restart persistence, secure operator lifecycle actions, assigned field queues and task cards, case-playbook and local-lead controls, source-preserving evidence-derivative records, explainable saved local graph queries, guided evidence intake and protected camera capture, offline QR exhibit labels and custody controls, stated observation-context limits, forensic dossier v4 integrity, reproducible briefing digests, review/resubmission, session locks, verified pairing, secure wipe, backup/transfer exclusion, and the native device assurance report.
 
 | Minimum required evidence | Required result |
 |---|---|
 | Fresh commission and restart | Device-bound encrypted database opens and remains readable after restart. |
 | Operator lifecycle | Disablement blocks PIN/biometric sign-in; reset, role change, and reinstatement are reauthenticated and audited. |
+| Strong biometric preference | PIN sign-in leaves biometric use disabled by default. Class 3 biometric activation requires explicit native confirmation, records an audit event, and can be withdrawn immediately by the operator. |
 | Field work queue | Field users see only assigned local operations and cannot load a removed/unassigned graph. |
 | Evidence and review | Encrypted media, provenance digest, guided intake, pending review, return, correction, and resubmission are validated offline. |
 | Controlled dissemination | Markings, redacted forensic dossier generation, disclosure-register recording, signature verification, and tamper rejection are demonstrated. |
@@ -52,6 +53,7 @@ Complete and archive the full [physical-device acceptance protocol](./DEVICE_ACC
 | Observation context | Stated source basis, coordinate/time precision, uncertainty constraints, role gating, dossier v4 projection, and tamper rejection are confirmed. |
 | Reproducible briefing | Explicit selected records and notes produce stable Markdown and SHA-256 output in the encrypted local register, without transmission or generated conclusions. |
 | Saved local graph queries | Stored filters, locally rendered match explanations, role gating, and no score/ranking/external lookup are confirmed. |
+| Case readiness cues | Local pending/returned review, provenance, milestone, task, lead, and documentation states are shown with exact explanations only; no score, rank, prediction, automatic action, or person-level assessment is present. |
 | Device assurance | Installed Android reporting is checked for actual key-security-level wording, storage-secret status, backup exclusion, biometric readiness, storage warning, protected-media count, last database open, and audit-chain state. |
 | Secure wipe | Protected local data and device-held storage secret cannot be reopened after the confirmed test wipe. |
 

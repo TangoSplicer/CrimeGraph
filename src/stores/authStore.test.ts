@@ -151,3 +151,24 @@ describe('operator lifecycle', () => {
     expect(mocks.appendAuditEntry).toHaveBeenCalledWith(expect.anything(), 'CHANGE_OPERATOR_ROLE', operator.id, expect.stringContaining('field to analyst'), 'ADMIN');
   });
 });
+
+
+describe('explicit biometric preference', () => {
+  it('keeps a newly signed-in operator opted out until the operator explicitly enables strong biometrics', async () => {
+    await useAuthStore.getState().addOperator('ANL-001', 'Analyst One', '123456', 'analyst');
+    await expect(useAuthStore.getState().login('ANL-001', '123456')).resolves.toBe(true);
+    expect(useAuthStore.getState().currentUser).toMatchObject({ badge: 'ANL-001', biometricEnabled: false });
+
+    await useAuthStore.getState().setBiometricPreference(true);
+    expect(useAuthStore.getState().currentUser).toMatchObject({ badge: 'ANL-001', biometricEnabled: true });
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(expect.anything(), 'ENABLE_BIOMETRIC_PREFERENCE', expect.any(String), expect.stringContaining('ANL-001'), 'ANL-001');
+
+    await useAuthStore.getState().setBiometricPreference(false);
+    expect(useAuthStore.getState().currentUser).toMatchObject({ badge: 'ANL-001', biometricEnabled: false });
+    expect(mocks.appendAuditEntry).toHaveBeenCalledWith(expect.anything(), 'DISABLE_BIOMETRIC_PREFERENCE', expect.any(String), expect.stringContaining('ANL-001'), 'ANL-001');
+  });
+
+  it('does not offer administrator biometric preference changes', async () => {
+    await expect(useAuthStore.getState().setBiometricPreference(true)).rejects.toThrow('Administrator biometric sign-in is not available');
+  });
+});

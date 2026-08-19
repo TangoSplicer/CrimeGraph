@@ -23,7 +23,7 @@ describe('Security & Cryptography Review: Case Archiving & Sync Conflicts', () =
       {
         name: 'PBKDF2',
         salt: salt as BufferSource,
-        iterations: 100000,
+        iterations: 600000,
         hash: 'SHA-256',
       },
       keyMaterial,
@@ -65,7 +65,7 @@ describe('Security & Cryptography Review: Case Archiving & Sync Conflicts', () =
       {
         name: 'PBKDF2',
         salt: salt as BufferSource,
-        iterations: 100000,
+        iterations: 600000,
         hash: 'SHA-256',
       },
       wrongKeyMaterial,

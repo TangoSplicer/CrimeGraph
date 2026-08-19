@@ -41,7 +41,7 @@ describe('high-risk reauthentication gate', () => {
 
   it('uses successful native biometric confirmation without requesting a credential', async () => {
     const login = vi.fn();
-    mocks.getAuthState.mockReturnValue({ currentUser: { badge: 'FIELD-7', role: 'field' }, login, adminLogin: vi.fn() });
+    mocks.getAuthState.mockReturnValue({ currentUser: { badge: 'FIELD-7', role: 'field', biometricEnabled: true }, login, adminLogin: vi.fn() });
     mocks.isNativePlatform.mockReturnValue(true);
     mocks.isBiometricAvailable.mockResolvedValue(true);
     mocks.authenticateWithBiometrics.mockResolvedValue(true);

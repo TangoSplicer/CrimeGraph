@@ -6,7 +6,10 @@ const db = {
   execute: vi.fn(),
 };
 
-vi.mock('../capacitor/db', () => ({ getDb: vi.fn(async () => db) }));
+vi.mock('../capacitor/db', () => ({
+  getDb: vi.fn(async () => db),
+  withDatabaseTransaction: vi.fn(async (connection, operation) => operation(connection)),
+}));
 
 import { archiveSecurityLimits, exportCaseArchive, importCaseArchive } from './caseArchive';
 
@@ -69,6 +72,35 @@ describe('case archive defensive fuzzing', () => {
     expect(db.execute).not.toHaveBeenCalled();
   });
 
+  it('imports a valid legacy 100,000-iteration archive only through the explicit compatibility path', async () => {
+    const crypto = globalThis.crypto;
+    const salt = crypto.getRandomValues(new Uint8Array(archiveSecurityLimits.SALT_BYTES));
+    const iv = crypto.getRandomValues(new Uint8Array(archiveSecurityLimits.GCM_IV_BYTES));
+    const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(securePassphrase), { name: 'PBKDF2' }, false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: salt as BufferSource, iterations: archiveSecurityLimits.LEGACY_PBKDF2_ITERATIONS, hash: 'SHA-256' },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt'],
+    );
+    const legacyBundle = {
+      version: '1.0', exportedAt: new Date().toISOString(), caseRecord: validCase,
+      nodes: [], edges: [], notes: [], provenance: [], derivatives: [], movements: [], contexts: [], auditLogs: [],
+    };
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(legacyBundle)));
+    const legacyArchive = JSON.stringify({
+      format: archiveSecurityLimits.ARCHIVE_FORMAT,
+      version: archiveSecurityLimits.ARCHIVE_VERSION,
+      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: archiveSecurityLimits.LEGACY_PBKDF2_ITERATIONS },
+      encryption: { name: 'AES-GCM', tagLength: 128 },
+      salt: Array.from(salt), iv: Array.from(iv), data: Array.from(new Uint8Array(ciphertext)),
+    });
+
+    await expect(importCaseArchive(legacyArchive, securePassphrase)).resolves.toBe(validCase.id);
+    expect(db.run).toHaveBeenCalledWith(expect.stringContaining('INSERT OR REPLACE INTO cases'), expect.any(Array));
+  });
+
   it('rejects wrong, short, empty, and overlong passphrases before database mutation', async () => {
     const archive = JSON.stringify(await buildArchive());
     await expect(importCaseArchive(archive, 'incorrect test passphrase!')).rejects.toThrow('Failed to decrypt archive');
@@ -122,6 +154,8 @@ describe('case archive defensive fuzzing', () => {
 
     const oversizedCiphertext = JSON.stringify({
       format: 'cgarchive', version: 1,
+      kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: archiveSecurityLimits.PBKDF2_ITERATIONS },
+      encryption: { name: 'AES-GCM', tagLength: 128 },
       salt: new Array(16).fill(0), iv: new Array(12).fill(0),
       data: new Array(archiveSecurityLimits.MAX_CIPHERTEXT_BYTES + 1).fill(0),
     });

@@ -7,7 +7,7 @@ export const requireHighRiskReauthentication = async (reason: string): Promise<v
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error('An active session is required for this action.');
 
-  if (Capacitor.isNativePlatform() && await isBiometricAvailable()) {
+  if (Capacitor.isNativePlatform() && currentUser.biometricEnabled === true && await isBiometricAvailable()) {
     if (await authenticateWithBiometrics(reason)) return;
     throw new Error('Biometric confirmation is required to continue.');
   }

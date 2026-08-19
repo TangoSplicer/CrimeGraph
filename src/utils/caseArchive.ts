@@ -1,8 +1,12 @@
-import { getDb } from '../capacitor/db';
+import { getDb, withDatabaseTransaction } from '../capacitor/db';
 
 const ARCHIVE_FORMAT = 'cgarchive';
 const ARCHIVE_VERSION = 1;
-const PBKDF2_ITERATIONS = 100000;
+// Current PBKDF2-HMAC-SHA256 work factor for new password-derived archives.
+const PBKDF2_ITERATIONS = 600000;
+// Explicit compatibility only for archives generated before the uplift.
+const LEGACY_PBKDF2_ITERATIONS = 100000;
+const SUPPORTED_PBKDF2_ITERATIONS = new Set([PBKDF2_ITERATIONS, LEGACY_PBKDF2_ITERATIONS]);
 const SALT_BYTES = 16;
 const GCM_IV_BYTES = 12;
 const GCM_TAG_BYTES = 16;
@@ -61,7 +65,7 @@ const parseByteArray = (value: unknown, label: string, expectedLength?: number):
   return new Uint8Array(value);
 };
 
-const parseArchiveEnvelope = (archiveJson: string): { salt: Uint8Array; iv: Uint8Array; data: Uint8Array } => {
+const parseArchiveEnvelope = (archiveJson: string): { salt: Uint8Array; iv: Uint8Array; data: Uint8Array; kdfIterations: number } => {
   if (typeof archiveJson !== 'string' || archiveJson.length === 0 || archiveJson.length > MAX_ARCHIVE_JSON_BYTES) {
     throw new Error('Invalid case archive: envelope size is not permitted.');
   }
@@ -81,7 +85,8 @@ const parseArchiveEnvelope = (archiveJson: string): { salt: Uint8Array; iv: Uint
   if (typedEnvelope.version !== undefined && typedEnvelope.version !== ARCHIVE_VERSION) {
     throw new Error('Invalid case archive: unsupported archive version.');
   }
-  if (typedEnvelope.kdf && (typedEnvelope.kdf.name !== 'PBKDF2' || typedEnvelope.kdf.hash !== 'SHA-256' || typedEnvelope.kdf.iterations !== PBKDF2_ITERATIONS)) {
+  const kdfIterations = typedEnvelope.kdf?.iterations;
+  if (!typedEnvelope.kdf || typedEnvelope.kdf.name !== 'PBKDF2' || typedEnvelope.kdf.hash !== 'SHA-256' || typeof kdfIterations !== 'number' || !Number.isInteger(kdfIterations) || !SUPPORTED_PBKDF2_ITERATIONS.has(kdfIterations)) {
     throw new Error('Invalid case archive: unsupported key-derivation parameters.');
   }
   if (typedEnvelope.encryption && (typedEnvelope.encryption.name !== 'AES-GCM' || typedEnvelope.encryption.tagLength !== 128)) {
@@ -92,7 +97,7 @@ const parseArchiveEnvelope = (archiveJson: string): { salt: Uint8Array; iv: Uint
   const iv = parseByteArray(typedEnvelope.iv, 'initialization vector', GCM_IV_BYTES);
   const data = parseByteArray(typedEnvelope.data, 'ciphertext');
   if (data.byteLength < GCM_TAG_BYTES) throw new Error('Invalid case archive: ciphertext is too short.');
-  return { salt, iv, data };
+  return { salt, iv, data, kdfIterations };
 };
 
 const parseArchiveBundle = (plaintext: string): ArchiveBundle => {
@@ -122,12 +127,12 @@ const parseArchiveBundle = (plaintext: string): ArchiveBundle => {
   return bundle as ArchiveBundle;
 };
 
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(password: string, salt: Uint8Array, iterations: number): Promise<CryptoKey> {
   const crypto = getCrypto();
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations, hash: 'SHA-256' },
     keyMaterial,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -160,7 +165,7 @@ export async function exportCaseArchive(caseId: string, password: string): Promi
   const crypto = getCrypto();
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(GCM_IV_BYTES));
-  const key = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt, PBKDF2_ITERATIONS);
   const encryptedContent = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(bundle)));
 
   const archivePackage = {
@@ -177,9 +182,9 @@ export async function exportCaseArchive(caseId: string, password: string): Promi
 
 export async function importCaseArchive(archiveJson: string, password: string): Promise<string> {
   assertStrongPassphrase(password);
-  const { salt, iv, data } = parseArchiveEnvelope(archiveJson);
+  const { salt, iv, data, kdfIterations } = parseArchiveEnvelope(archiveJson);
   const crypto = getCrypto();
-  const key = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt, kdfIterations);
 
   let decryptedContent: ArrayBuffer;
   try {
@@ -190,22 +195,17 @@ export async function importCaseArchive(archiveJson: string, password: string): 
   const bundle = parseArchiveBundle(new TextDecoder().decode(decryptedContent));
 
   const db = await getDb();
-  await db.execute('BEGIN IMMEDIATE;');
-  try {
+  return withDatabaseTransaction(db, async (transactionDb) => {
     const c = bundle.caseRecord as Record<string, any>;
-    await db.run(
+    await transactionDb.run(
       'INSERT OR REPLACE INTO cases (id, reference_number, title, case_type, status, lead_officer_id, classification, description, date_opened, date_closed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [c.id, c.reference_number, c.title, c.case_type, c.status || 'active', c.lead_officer_id || null, c.classification || 'OFFICIAL', c.description || null, c.date_opened, c.date_closed || null, c.created_at, c.updated_at],
     );
-    for (const node of bundle.nodes as any[]) await db.run('INSERT OR REPLACE INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [node.id, node.case_id, node.label, node.type, node.confidence || 3, node.created_at, node.occurred_at || null, node.attributes || null, node.review_status || 'not_required']);
-    for (const edge of bundle.edges as any[]) await db.run('INSERT OR REPLACE INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [edge.id, edge.case_id, edge.source, edge.target, edge.label, edge.created_at]);
-    for (const note of bundle.notes as any[]) await db.run('INSERT OR REPLACE INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [note.id, note.case_id, note.content, note.linked_nodes || '[]', note.created_at]);
-    await db.execute('COMMIT;');
+    for (const node of bundle.nodes as any[]) await transactionDb.run('INSERT OR REPLACE INTO nodes (id, case_id, label, type, confidence, created_at, occurred_at, attributes, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [node.id, node.case_id, node.label, node.type, node.confidence || 3, node.created_at, node.occurred_at || null, node.attributes || null, node.review_status || 'not_required']);
+    for (const edge of bundle.edges as any[]) await transactionDb.run('INSERT OR REPLACE INTO edges (id, case_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)', [edge.id, edge.case_id, edge.source, edge.target, edge.label, edge.created_at]);
+    for (const note of bundle.notes as any[]) await transactionDb.run('INSERT OR REPLACE INTO notes (id, case_id, content, linked_nodes, created_at) VALUES (?, ?, ?, ?, ?)', [note.id, note.case_id, note.content, note.linked_nodes || '[]', note.created_at]);
     return String(c.id);
-  } catch (err) {
-    try { await db.execute('ROLLBACK;'); } catch {}
-    throw err;
-  }
+  });
 }
 
-export const archiveSecurityLimits = { ARCHIVE_FORMAT, ARCHIVE_VERSION, PBKDF2_ITERATIONS, SALT_BYTES, GCM_IV_BYTES, MAX_ARCHIVE_JSON_BYTES, MAX_CIPHERTEXT_BYTES, MAX_RECORDS_PER_COLLECTION };
+export const archiveSecurityLimits = { ARCHIVE_FORMAT, ARCHIVE_VERSION, PBKDF2_ITERATIONS, LEGACY_PBKDF2_ITERATIONS, SALT_BYTES, GCM_IV_BYTES, MAX_ARCHIVE_JSON_BYTES, MAX_CIPHERTEXT_BYTES, MAX_RECORDS_PER_COLLECTION };

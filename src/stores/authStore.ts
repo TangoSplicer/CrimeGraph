@@ -5,7 +5,7 @@ import { assertPermission, isUserRole, type UserRole } from '../utils/permission
 import { appendAuditEntry } from '../utils/auditLedger';
 
 export type OperatorStatus = 'active' | 'disabled';
-export interface User { id: string; badge: string; name: string; role: UserRole; }
+export interface User { id: string; badge: string; name: string; role: UserRole; biometricEnabled?: boolean; }
 type ManageableRole = Exclude<UserRole, 'admin'>;
 export interface OperatorRecord extends Omit<User, 'role'> {
   role: ManageableRole;
@@ -179,7 +179,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       await updateLastLogin(db, user.id, true);
       localStorage.setItem('crimegraph_last_user', user.badge);
-      set({ currentUser: user as User });
+      set({ currentUser: { ...user, biometricEnabled: true } as User });
       return true;
     } catch (error) {
       console.error('Operator sign-in failed.', error);
@@ -197,7 +197,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!user || !isUserRole(user.role)) return false;
 
       await updateLastLogin(db, user.id);
-      set({ currentUser: user as User });
+      set({ currentUser: { ...user, biometricEnabled: Number(user.biometric_enabled || 0) === 1 } as User });
       return true;
     } catch (error) {
       console.error('Biometric profile restoration failed.', error);
@@ -213,7 +213,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!user || !isUserRole(user.role) || !await verifyAndUpgradeCredential(db, user, password)) return false;
 
       await updateLastLogin(db, user.id);
-      set({ currentUser: user as User });
+      set({ currentUser: { ...user, biometricEnabled: false } as User });
       return true;
     } catch (error) {
       console.error('Administrator sign-in failed.', error);

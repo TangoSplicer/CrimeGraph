@@ -95,8 +95,17 @@ export const MeshNetwork = {
         adapter.initialize((result: any) => {
           if (result?.status !== 'enabled') return fail(`Bluetooth radio is not ready (${String(result?.status || 'unknown state')}). Enable Bluetooth and grant Nearby devices permission.`);
           try {
+            let peripheralSetupStarted = false;
             adapter.initializePeripheral((peripheralResult: any) => {
-              if (peripheralResult?.status !== 'enabled') return fail(`Bluetooth advertising is unavailable (${String(peripheralResult?.status || 'unknown state')}). Confirm Bluetooth permissions and retry.`);
+              const peripheralStatus = String(peripheralResult?.status || 'unknown state');
+              // initializePeripheral is a long-lived GATT-server callback. Once the
+              // peripheral is ready it also emits normal `connected`/`disconnected`
+              // events for nearby devices; these are operational updates, not setup
+              // failures and must not cancel advertising.
+              if (peripheralStatus === 'connected' || peripheralStatus === 'disconnected' || peripheralStatus === 'readRequested' || peripheralStatus === 'writeRequested') return;
+              if (peripheralStatus !== 'enabled') return fail(`Bluetooth advertising is unavailable (${peripheralStatus}). Confirm Bluetooth permissions and retry.`);
+              if (peripheralSetupStarted) return;
+              peripheralSetupStarted = true;
               adapter.addService(() => {
                 adapter.startAdvertising(succeed, (error: unknown) => {
                   fail(`Tactical Mesh advertising could not start: ${describeNativeError(error, 'radio access was denied')}.`);

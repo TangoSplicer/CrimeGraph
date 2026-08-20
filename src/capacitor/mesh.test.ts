@@ -114,3 +114,31 @@ describe('Tactical Mesh Android permission preflight', () => {
     expect(initialize).not.toHaveBeenCalled();
   });
 });
+
+
+describe('Tactical Mesh peripheral lifecycle callbacks', () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
+  });
+
+  afterEach(() => {
+    delete (globalThis as typeof globalThis & { bluetoothle?: unknown }).bluetoothle;
+  });
+
+  it('retains a ready advertising state when the long-lived GATT callback reports a connected peer', async () => {
+    const adapter = {
+      initialize: vi.fn((success: (value: unknown) => void) => success({ status: 'enabled' })),
+      initializePeripheral: vi.fn((success: (value: unknown) => void) => {
+        success({ status: 'enabled' });
+        success({ status: 'connected' });
+      }),
+      addService: vi.fn((success: () => void) => success()),
+      startAdvertising: vi.fn((success: () => void) => success()),
+    };
+    (globalThis as typeof globalThis & { bluetoothle?: unknown }).bluetoothle = adapter;
+
+    await expect(MeshNetwork.initializeHardware()).resolves.toBeUndefined();
+    expect(adapter.addService).toHaveBeenCalledOnce();
+    expect(adapter.startAdvertising).toHaveBeenCalledOnce();
+  });
+});

@@ -38,6 +38,7 @@ export const AddNodeScreen: React.FC = () => {
   const addNode = useCaseStore((state) => state.addNode);
   const activeCaseId = useCaseStore((state) => state.activeCaseId);
   const currentUser = useAuthStore((state) => state.currentUser);
+  const setIntentionalBackground = useAuthStore((state) => state.setIntentionalBackground);
   const isFieldOperator = currentUser?.role === 'field';
   
   const [selectedType, setSelectedType] = useState('person');
@@ -95,8 +96,12 @@ export const AddNodeScreen: React.FC = () => {
 
   const handleCapturePhoto = async () => {
     try {
+      // The Android camera runs in a separate activity. Mark this single,
+      // operator-initiated transition so the app-wide unattended-background
+      // lockout does not end the authenticated evidence draft on return.
+      setIntentionalBackground(true);
       setIsCapturing(true);
-      setCaptureMessage('');
+      setCaptureMessage('Opening the device camera. Your evidence-node draft remains active while you capture or select a photo.');
       const attachment = await captureEvidencePhoto(activeCaseId || '');
       setEvidence({
         ...evidence,
@@ -114,6 +119,7 @@ export const AddNodeScreen: React.FC = () => {
       setCaptureMessage(error instanceof Error ? error.message : 'The field capture could not be completed.');
     } finally {
       setIsCapturing(false);
+      setIntentionalBackground(false);
     }
   };
 
@@ -146,7 +152,7 @@ export const AddNodeScreen: React.FC = () => {
       </div>
 
       <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col">
-        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-6">
+        <div className="flex-1 overflow-y-auto p-4 space-y-6 pb-36">
         {isFieldOperator && <div className="border border-[#f39c12]/50 bg-[#f39c12]/10 rounded-lg p-3"><p className="text-xs font-bold text-[#f7c86b] uppercase tracking-wide">Field submission protocol</p><p className="mt-1 text-[10px] text-[#dde1ec]">This observation will be marked <strong>pending review</strong> after submission. Any return-for-correction comment will be visible in the graph workspace.</p></div>}
         <section>
           <label className="block text-xs font-bold text-[#7880a0] uppercase mb-3 tracking-wider">Entity Type</label>
@@ -240,9 +246,9 @@ export const AddNodeScreen: React.FC = () => {
         </section>
 
         </div>
-        <div className="shrink-0 border-t border-[#252a3a] bg-[#14171f] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="shrink-0 border-t border-[#252a3a] bg-[#14171f] px-4 pt-3 pb-safe-nav">
           {deployMessage && <p role="alert" className="mb-3 rounded border border-[#c0392b]/70 bg-[#c0392b]/10 p-3 text-xs leading-relaxed text-[#ffb0aa]">{deployMessage}</p>}
-          <button type="submit" disabled={!label.trim() || isDeploying} className="min-h-12 w-full rounded bg-[#3a7bd5] py-3 text-base font-bold text-white shadow-[0_0_15px_rgba(58,123,213,0.3)] transition-colors hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] disabled:shadow-none">
+          <button type="submit" disabled={!label.trim() || isDeploying} className="min-h-14 w-full rounded bg-[#3a7bd5] py-3 text-base font-bold text-white shadow-[0_0_15px_rgba(58,123,213,0.3)] transition-colors hover:bg-[#4a8be5] disabled:bg-[#252a3a] disabled:text-[#7880a0] disabled:shadow-none">
             {isDeploying ? 'Deploying node…' : isFieldOperator ? 'Submit for supervisor review' : 'Deploy Node'}
           </button>
         </div>

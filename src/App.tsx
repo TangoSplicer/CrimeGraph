@@ -13,23 +13,26 @@ import { useAuthStore } from './stores/authStore';
 const SESSION_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 export const App: React.FC = () => {
-  const { currentUser, isAppReady, initializeAuth, logout, intentionalBackground, setIntentionalBackground } = useAuthStore();
+  const { currentUser, isAppReady, initializeAuth, logout } = useAuthStore();
 
   useEffect(() => {
     initializeAuth();
 
-    // The Background Lockdown Listener
+    // External native activities, such as the device camera, are explicitly
+    // marked by their workflow before launch. Read the store at event time so a
+    // just-set capture intent cannot race the Android pause notification.
     const appStateListener = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive && !intentionalBackground) {
-        logout(); // Force re-authentication if pushed to background
+      const auth = useAuthStore.getState();
+      if (!isActive && !auth.intentionalBackground) {
+        auth.logout(); // Force re-authentication if pushed to background
       }
-      if (isActive && intentionalBackground) {
-        setIntentionalBackground(false); // Reset intent once back
+      if (isActive && auth.intentionalBackground) {
+        auth.setIntentionalBackground(false); // Reset approved native transition on return
       }
     });
 
     return () => { appStateListener.then(l => l.remove()); };
-  }, [initializeAuth, logout, intentionalBackground, setIntentionalBackground]);
+  }, [initializeAuth]);
 
   useEffect(() => {
     if (!currentUser) return;

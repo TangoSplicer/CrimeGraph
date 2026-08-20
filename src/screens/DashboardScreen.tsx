@@ -190,8 +190,8 @@ export const DashboardScreen: React.FC = () => {
       </div>
 
       {assignmentCaseId && (
-        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-4">
-          <section role="dialog" aria-modal="true" aria-label="Manage field assignments" className="w-full max-w-md max-h-[80vh] overflow-y-auto bg-[#14171f] border border-[#b893e6] rounded-lg p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-safe-modal">
+          <section role="dialog" aria-modal="true" aria-label="Manage field assignments" className="safe-modal-card w-full max-w-md bg-[#14171f] border border-[#b893e6] rounded-lg p-5 shadow-2xl">
             <div className="flex justify-between gap-3 border-b border-[#252a3a] pb-3 mb-4"><div><h2 className="text-sm font-bold text-[#d8c8ff] uppercase tracking-widest">Field work queue</h2><p className="mt-1 text-[10px] text-[#7880a0]">Assignments are local to this encrypted device and do not transfer intelligence.</p></div><button onClick={() => setAssignmentCaseId(null)} className="text-xs font-bold text-[#7880a0] uppercase">Close</button></div>
             <div className="space-y-3">
               <label className="block text-[10px] font-bold uppercase text-[#7880a0]">Active field operator
@@ -210,8 +210,8 @@ export const DashboardScreen: React.FC = () => {
       )}
 
       {taskCaseId && (
-        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-4">
-          <section role="dialog" aria-modal="true" aria-label="My field tasks" className="w-full max-w-md max-h-[80vh] overflow-y-auto bg-[#14171f] border border-[#3a7bd5] rounded-lg p-5 shadow-2xl">
+        <div className="fixed inset-0 z-[90] bg-black/80 flex items-end sm:items-center justify-center p-safe-modal">
+          <section role="dialog" aria-modal="true" aria-label="My field tasks" className="safe-modal-card w-full max-w-md bg-[#14171f] border border-[#3a7bd5] rounded-lg p-5 shadow-2xl">
             <div className="flex justify-between gap-3 border-b border-[#252a3a] pb-3 mb-4"><div><h2 className="text-sm font-bold text-[#72a7f0] uppercase tracking-widest">My field tasks</h2><p className="mt-1 text-[10px] text-[#7880a0]">Complete a task with an optional handoff note, or return it with a specific inability reason.</p></div><button onClick={() => setTaskCaseId(null)} className="text-xs font-bold text-[#7880a0] uppercase">Close</button></div>
             <div className="space-y-3">{fieldTasks.length === 0 ? <p className="text-xs italic text-[#7880a0]">No task cards are assigned to this operation.</p> : fieldTasks.map((task) => <article key={task.id} className="rounded border border-[#252a3a] bg-[#0c0e14] p-3"><div className="flex justify-between gap-3"><div><h3 className="text-xs font-bold text-[#dde1ec]">{task.title}</h3><p className="mt-1 text-[9px] uppercase font-bold text-[#72a7f0]">{task.status}</p></div>{task.dueAt && <span className="text-[9px] text-[#f7c86b]">Due {new Date(task.dueAt).toLocaleString()}</span>}</div><p className="mt-3 text-xs leading-relaxed text-[#dde1ec]">{task.objective}</p>{task.checklist.length > 0 && <ul className="mt-3 space-y-1 text-[10px] text-[#9aa3bb]">{task.checklist.map((item, index) => <li key={`${task.id}-${index}`}>□ {item}</li>)}</ul>}{task.contextNote && <p className="mt-3 rounded border border-[#454d66] bg-[#14171f] p-2 text-[10px] text-[#d8c8ff]">{task.contextNote}</p>}{task.status === 'assigned' ? <div className="mt-3 space-y-2"><textarea value={taskCompletionNote} onChange={(event) => setTaskCompletionNote(event.target.value)} maxLength={1000} placeholder="Completion handoff note, or reason unable to complete" className="w-full min-h-16 bg-[#14171f] border border-[#454d66] rounded p-2 text-xs text-white focus:border-[#3a7bd5] focus:outline-none" /><div className="grid grid-cols-2 gap-2"><button onClick={() => handleCompleteTask(task.id, 'complete')} className="rounded bg-[#1d9a6c] py-2 text-[10px] font-bold uppercase text-white">Complete</button><button onClick={() => handleCompleteTask(task.id, 'unable')} disabled={taskCompletionNote.trim().length < 5} className="rounded border border-[#c0392b] py-2 text-[10px] font-bold uppercase text-[#ff9d95] disabled:opacity-40">Unable to complete</button></div></div> : <p className="mt-3 text-[10px] text-[#9aa3bb]">{task.status === 'complete' ? task.completionNote || 'Completed without an additional handoff note.' : `Returned: ${task.inabilityReason}`}</p>}</article>)}</div>
             {assignmentMsg && <p role="status" className="mt-4 text-[10px] font-bold text-[#72a7f0]">{assignmentMsg}</p>}
@@ -220,8 +220,8 @@ export const DashboardScreen: React.FC = () => {
       )}
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-[#14171f] border border-[#252a3a] w-full max-w-sm rounded-lg p-6 shadow-2xl flex flex-col">
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-end sm:items-center justify-center p-safe-modal">
+          <div className="safe-modal-card bg-[#14171f] border border-[#252a3a] w-full max-w-sm rounded-lg p-6 shadow-2xl flex flex-col">
             <h2 className="text-lg font-bold text-white mb-4 uppercase tracking-widest">New Operation</h2>
             <form onSubmit={handleCreateCase} className="space-y-4">
               <div>

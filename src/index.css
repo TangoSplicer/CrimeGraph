@@ -56,7 +56,22 @@
 
   .p-safe-modal {
     padding: 1rem;
+    padding-top: max(1rem, env(safe-area-inset-top, 0px));
     padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Full-screen overlays can cover the persistent app navigation. These two
+     utilities keep both the dialog frame and its final action within the
+     dynamic Android viewport and above gesture/navigation insets. */
+  .safe-modal-card {
+    max-height: calc(100dvh - 2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    padding-bottom: max(1rem, calc(0.75rem + env(safe-area-inset-bottom, 0px)));
+  }
+
+  .bottom-sheet-above-nav {
+    bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 4.75rem - env(safe-area-inset-bottom, 0px));
   }
 }
 

@@ -1,6 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { AndroidBiometryStrength, BiometricAuth } from '@aparajita/capacitor-biometric-auth';
 
 const ShieldIcon = ({ className }: { className: string }) => (
   <svg className={className} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -9,7 +8,7 @@ const ShieldIcon = ({ className }: { className: string }) => (
 );
 
 export const AuthScreen: React.FC = () => {
-  const { isFirstBoot, setupMasterAdmin, login, adminLogin, biometricLogin } = useAuthStore();
+  const { isFirstBoot, setupMasterAdmin, login, adminLogin } = useAuthStore();
   const [badge, setBadge] = useState('');
   const [pin, setPin] = useState('');
   const [adminPass, setAdminPass] = useState('');
@@ -17,29 +16,6 @@ export const AuthScreen: React.FC = () => {
   const [mode, setMode] = useState<'standard' | 'admin'>('standard');
   const [isLoading, setIsLoading] = useState(false);
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
-
-  // 🚀 REINSTATED BIOMETRICS
-  useEffect(() => {
-    const triggerBiometrics = async () => {
-      if (isFirstBoot || mode === 'admin') return;
-      try {
-        const available = await BiometricAuth.checkBiometry();
-        if (available.strongBiometryIsAvailable) {
-          await BiometricAuth.authenticate({
-            reason: 'Authenticate to access CrimeGraph',
-            androidTitle: 'Operator Login',
-            androidBiometryStrength: AndroidBiometryStrength.strong,
-            allowDeviceCredential: false,
-          });
-          const success = await biometricLogin();
-          if (!success) setError('Biometric verified, but no active operator profile found. Use PIN.');
-        }
-      } catch (err) {
-        // Biometric failed or cancelled, fallback silently to PIN pad
-      }
-    };
-    triggerBiometrics();
-  }, [isFirstBoot, mode, biometricLogin]);
 
   const handlePressStart = () => {
     pressTimer.current = setTimeout(() => {

@@ -47,8 +47,8 @@ export const RoleWalkthrough: React.FC<RoleWalkthroughProps> = ({ user }) => {
   const isFinalStep = stepIndex === steps.length - 1;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-[#05070c]/85 px-3 pt-safe pb-safe-nav" role="dialog" aria-modal="true" aria-labelledby="walkthrough-title">
-      <div className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-t-xl sm:rounded-xl border border-[#3a7bd5]/60 bg-[#14171f] p-5 shadow-[0_0_40px_rgba(0,0,0,0.6)]">
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center bg-[#05070c]/85 p-safe-modal" role="dialog" aria-modal="true" aria-labelledby="walkthrough-title">
+      <div className="safe-modal-card w-full max-w-lg rounded-t-xl sm:rounded-xl border border-[#3a7bd5]/60 bg-[#14171f] p-5 shadow-[0_0_40px_rgba(0,0,0,0.6)]">
         <div className="mb-4 flex items-start justify-between gap-4 border-b border-[#252a3a] pb-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#72a7f0]">First-time guide · {user.role}</p>

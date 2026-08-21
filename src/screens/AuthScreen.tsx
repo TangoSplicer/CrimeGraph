@@ -50,7 +50,7 @@ export const AuthScreen: React.FC = () => {
 
   if (isFirstBoot) {
     return (
-      <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec]">
+      <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 pt-safe pb-safe text-[#dde1ec]">
         <ShieldIcon className="w-16 h-16 text-[#e74c3c] mb-6" />
         <h1 className="text-xl font-bold tracking-widest text-[#e74c3c] mb-2 uppercase">System Commissioning</h1>
         <p className="text-xs text-[#7880a0] text-center mb-8">No Master Admin detected. Establish primary password.</p>
@@ -62,7 +62,7 @@ export const AuthScreen: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#0c0e14] flex flex-col items-center justify-center p-6 text-[#dde1ec] relative pt-safe">
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-[#0c0e14] p-6 pt-safe pb-safe text-[#dde1ec]">
       <div className="mb-8 p-4 cursor-pointer select-none" onTouchStart={handlePressStart} onTouchEnd={handlePressEnd} onTouchCancel={handlePressEnd} onMouseDown={handlePressStart} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}>
         <ShieldIcon className={`w-20 h-20 transition-colors duration-1000 ${mode === 'admin' ? 'text-[#e74c3c]' : 'text-[#3a7bd5]'}`} />
       </div>

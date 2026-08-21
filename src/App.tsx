@@ -50,7 +50,7 @@ export const App: React.FC = () => {
     };
   }, [currentUser, logout]);
 
-  if (!isAppReady) return <div className="min-h-screen bg-[#0c0e14] flex items-center justify-center text-[#3a7bd5] font-mono">INITIALISING HARDWARE...</div>;
+  if (!isAppReady) return <div className="flex min-h-screen items-center justify-center bg-[#0c0e14] pt-safe pb-safe font-mono text-[#3a7bd5]">INITIALISING HARDWARE...</div>;
   if (!currentUser) return <AuthScreen />;
 
   return (

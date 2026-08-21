@@ -44,4 +44,20 @@ describe('mobile system-UI overlap safeguards', () => {
       expect(source).toContain('min-h-14 w-full');
     }
   });
+
+  it('applies balanced system-bar clearance to bootstrap, authentication, and walkthrough surfaces', async () => {
+    const [appSource, authSource, walkthroughSource, cssSource] = await Promise.all([
+      readFile(resolve(__dirname, '../App.tsx'), 'utf8'),
+      readSource('AuthScreen.tsx'),
+      readFile(resolve(__dirname, '../components/RoleWalkthrough.tsx'), 'utf8'),
+      readFile(resolve(__dirname, '../index.css'), 'utf8'),
+    ]);
+
+    expect(appSource).toContain('pt-safe pb-safe');
+    expect((authSource.match(/pt-safe pb-safe/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(walkthroughSource).toContain('p-safe-modal');
+    expect(walkthroughSource).toContain('safe-modal-card');
+    expect(cssSource).toContain('.safe-modal-card');
+    expect(cssSource).toContain('.bottom-sheet-above-nav');
+  });
 });
